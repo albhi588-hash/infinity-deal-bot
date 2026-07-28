@@ -30,17 +30,19 @@ const DATA_FILE = path.join(__dirname, "data.json");
 function loadData() {
   try {
     if (!fs.existsSync(DATA_FILE)) {
-      return { lastDealId: 0, deals: {} };
+      return { lastDealId: 0, deals: {}, users: {} };
     }
 
     const parsed = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
+
     return {
       lastDealId: Number(parsed.lastDealId || 0),
-      deals: parsed.deals || {}
+      deals: parsed.deals || {},
+      users: parsed.users || {}
     };
   } catch (error) {
     console.error("data.json পড়তে সমস্যা:", error.message);
-    return { lastDealId: 0, deals: {} };
+    return { lastDealId: 0, deals: {}, users: {} };
   }
 }
 
@@ -55,6 +57,10 @@ function esc(value = "") {
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
+}
+
+function usernameKey(username = "") {
+  return String(username).replace(/^@/, "").trim().toLowerCase();
 }
 
 function formatDealId(number) {
@@ -79,6 +85,24 @@ async function deleteSilently(ctx) {
   try {
     await ctx.deleteMessage();
   } catch {}
+}
+
+function registerUser(ctx) {
+  if (!ctx.from?.username) return false;
+
+  const data = loadData();
+  const key = usernameKey(ctx.from.username);
+
+  data.users[key] = {
+    userId: ctx.from.id,
+    username: ctx.from.username,
+    firstName: ctx.from.first_name || "",
+    lastName: ctx.from.last_name || "",
+    updatedAt: new Date().toISOString()
+  };
+
+  saveData(data);
+  return true;
 }
 
 function parseCreateCommand(text = "") {
@@ -139,20 +163,44 @@ function paymentText(deal) {
   ].join("\n");
 }
 
-function paidText(deal) {
+function verifiedText(deal) {
   return [
-    paymentText(deal),
-    "",
-    "🔒 <b>Payment Successfully Received</b>",
+    "✅ <b>Payment verified successfully.</b>",
     "",
     `🆔 Deal ID: <code>${esc(deal.dealId)}</code>`,
+    `💰 Amount: <b>${esc(deal.amount)} ${esc(deal.currencySymbol)}</b>`,
     "",
-    "✅ Payment verified successfully."
+    `👤 Seller: ${esc(deal.seller)}`,
+    "📝 Condition:",
+    esc(deal.sellerCondition),
+    "",
+    `👤 Buyer: ${esc(deal.buyer)}`,
+    "📝 Condition:",
+    esc(deal.buyerCondition)
   ].join("\n");
 }
 
+async function sendDm(userId, text) {
+  if (!userId) return false;
+
+  try {
+    await bot.telegram.sendMessage(userId, text, {
+      parse_mode: "HTML",
+      disable_web_page_preview: true
+    });
+    return true;
+  } catch (error) {
+    console.error("DM failed:", error.message);
+    return false;
+  }
+}
+
 bot.start(async (ctx) => {
-  await ctx.reply("✅ Infinity Deal Bot চালু আছে।");
+  registerUser(ctx);
+
+  await ctx.reply(
+    "✅ Infinity Deal Bot চালু আছে।\n\nএখন থেকে আপনার Deal notification এখানে আসবে।"
+  );
 });
 
 bot.command("m", async (ctx) => {
@@ -266,12 +314,34 @@ bot.action(/^paid:(#\d{4,})$/, async (ctx) => {
   data.deals[dealId] = deal;
   saveData(data);
 
-  // একই মেসেজ edit হবে এবং কোনো button রাখা হবে না।
-  await ctx.editMessageText(paidText(deal), {
+  const shortText = verifiedText(deal);
+
+  // গ্রুপের একই message ছোট করে edit হবে এবং সব button hide হবে।
+  await ctx.editMessageText(shortText, {
     parse_mode: "HTML",
     disable_web_page_preview: true,
     reply_markup: { inline_keyboard: [] }
   });
+
+  const buyerRecord = data.users[usernameKey(deal.buyer)];
+  const sellerRecord = data.users[usernameKey(deal.seller)];
+
+  const [buyerSent, sellerSent] = await Promise.all([
+    sendDm(buyerRecord?.userId, shortText),
+    sendDm(sellerRecord?.userId, shortText)
+  ]);
+
+  // Callback loading বন্ধ করা এবং প্রয়োজন হলে Admin-কে কারণ দেখানো।
+  if (!buyerSent || !sellerSent) {
+    const missing = [];
+    if (!buyerSent) missing.push("Buyer");
+    if (!sellerSent) missing.push("Seller");
+
+    return ctx.answerCbQuery(
+      `${missing.join(" ও ")} আগে Bot-এ Start না করায় DM যায়নি।`,
+      { show_alert: true }
+    );
+  }
 
   try {
     await ctx.answerCbQuery();
@@ -294,16 +364,15 @@ bot.catch((error) => {
 });
 
 app.get("/", (_req, res) => {
-  res.send("Infinity Deal Bot V4.1 is running ✅");
+  res.send("Infinity Deal Bot V4.2 is running ✅");
 });
 
 app.get("/health", (_req, res) => {
   res.json({
     ok: true,
-    version: "4.1.0",
-    firebase: false,
-    privateMessages: false,
-    buttonsAfterPayment: false
+    version: "4.2.0",
+    buyerSellerDm: true,
+    shortGroupEdit: true
   });
 });
 
@@ -312,7 +381,7 @@ app.listen(PORT, async () => {
 
   try {
     await bot.launch({ dropPendingUpdates: true });
-    console.log("Infinity Deal Bot V4.1 started ✅");
+    console.log("Infinity Deal Bot V4.2 started ✅");
   } catch (error) {
     console.error("Bot launch failed:", error);
   }
