@@ -1,7 +1,8 @@
 {
-  "name": "infinity-deal-bot",
-  "version": "1.0.0",
-  "description": "Infinity Deal-Box Telegram escrow bot",
+  "name": "infinity-deal-bot-v2",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Infinity Deal-Box Telegram deal management bot",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

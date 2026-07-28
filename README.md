@@ -1,71 +1,67 @@
-# Infinity Deal Bot v1
+# Infinity Deal Bot v2
 
-এই ZIP সরাসরি GitHub-এ আপলোড করার জন্য তৈরি।
+## নতুন সুবিধা
 
-## বর্তমান ফিচার
+- `/myid` দিলে নিজের Telegram User ID পাওয়া যাবে
+- গ্রুপে `/groupid` দিলে Group ID পাওয়া যাবে
+- `/m` কমান্ড শুধু Admin ব্যবহার করতে পারবেন
+- Admin-এর command সঙ্গে সঙ্গে delete হবে
+- Deal ID `#0001`, `#0002` করে বাড়বে
+- Deal ID ও wallet number tap করে copy করা যাবে
+- `🔒 Payment Received` button
+- Button চাপলে Owner-এর private chat-এ নির্ধারিত message যাবে
+- `ALLOWED_GROUP_ID` বসালে অন্য গ্রুপ থেকে Bot নিজে বের হয়ে যাবে
 
-- `/m` কমান্ড শুধু গ্রুপ Admin ব্যবহার করতে পারবেন
-- Command পাঠানোর পর `/m ...` মেসেজ Auto Delete
-- Auto Deal ID: `#0001`, `#0002`...
-- Deal ID ও Wallet Number tap করে copy করা যায়
-- Payment Instructions সুন্দরভাবে দেখায়
-- `🔒 Payment Received` Button
-- Button চাপলে Owner-এর Private Chat-এ এই মেসেজ যায়:
-
-```text
-🔒 Payment Successfully Received
-
-🆔 Deal ID: #0001
-
-✅ Payment verified successfully.
-```
-
-- অন্য গ্রুপে যোগ করলে Bot নিজে Leave করবে
-- Bot শুধু `ALLOWED_GROUP_ID` গ্রুপে কাজ করবে
-
-## Command Format
+## Command
 
 ```text
 /m 200 @buyer @seller Seller Condition | Buyer Condition
 ```
 
-উদাহরণ:
+## Render Environment Variables
+
+প্রথমে:
 
 ```text
-/m 200 @nhkhan12 @m_r_sahin কন্ডিশন আইডি buyer রিসিভ করলে seller-কে payment দিবেন | same condition
+BOT_TOKEN = নতুন Bot Token
 ```
 
-## জরুরি নিরাপত্তা
+Deploy হওয়ার পরে Bot-এর private chat-এ:
 
-আগের Bot Token প্রকাশ হয়েছিল। BotFather থেকে পুরনো Token Revoke করে নতুন Token ব্যবহার করুন।
-নতুন Token কখনো GitHub file বা Telegram message-এ লিখবেন না।
+```text
+/myid
+```
 
-## Environment Variables
+গ্রুপে:
 
-Hosting-এ নিচের Variables বসাতে হবে:
+```text
+/groupid
+```
 
-- `BOT_TOKEN` = BotFather-এর নতুন Token
-- `ALLOWED_GROUP_ID` = আপনার Telegram Group ID
-- `OWNER_USER_ID` = আপনার নিজের Telegram Numeric User ID
-- `BKASH` = bKash নম্বর
-- `NAGAD` = Nagad নম্বর
-- `ROCKET` = Rocket নম্বর
-- `BINANCE_PAY_ID` = Binance Pay ID
+দুটি ID পাওয়ার পরে Render-এ যোগ করুন:
 
-## Telegram Permission
+```text
+OWNER_USER_ID = আপনার User ID
+ALLOWED_GROUP_ID = আপনার Group ID
+BKASH = 01571092111
+NAGAD = 01571092111
+ROCKET = 01571092111
+BINANCE_PAY_ID = 784264674
+```
 
-Bot-কে আপনার গ্রুপে Admin করে অন্তত এই Permission দিন:
+তারপর Manual Deploy বা Restart দিন।
+
+## Telegram Group Permission
+
+Bot-কে Admin করে অন্তত:
 
 - Delete Messages
 - Send Messages
 
+অনুমতি দিন।
+
 ## গুরুত্বপূর্ণ
 
-Owner-এর Private Chat-এ notification পাওয়ার জন্য Owner-কে আগে Bot-এর Profile খুলে `Start` চাপতে হবে।
+Private notification পেতে Owner-কে আগে Bot-এর private chat-এ `/start` পাঠাতে হবে।
 
-## চালানোর Command
-
-```bash
-npm install
-npm start
-```
+Render Free service restart/redeploy হলে local `data.json` reset হতে পারে। স্থায়ী Deal History ও স্থায়ী Deal ID-এর জন্য পরের সংস্করণে Firebase ব্যবহার করা হবে।
