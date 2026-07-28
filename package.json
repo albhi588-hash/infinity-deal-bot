@@ -1,8 +1,8 @@
 {
-  "name": "infinity-deal-bot-v3-group-only",
-  "version": "3.4.0",
+  "name": "infinity-deal-bot-v3-5-clean",
+  "version": "3.5.0",
   "private": true,
-  "description": "Infinity Deal Bot - group-only payment verification",
+  "description": "Infinity Deal Bot - same-message verification, no DM, no popup text",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

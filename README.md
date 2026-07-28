@@ -1,15 +1,22 @@
-# Infinity Deal Bot V3.4
+# Infinity Deal Bot V3.5
 
-এই সংস্করণে কোনো Private DM নেই।
-
-`🔒 Payment Received` Button চাপলে:
+এই সংস্করণে `Payment Received` চাপলে:
 
 - শুধু Group Admin ব্যবহার করতে পারবেন
-- নতুন Message পাঠাবে না
-- Personal Chat-এ কিছু পাঠাবে না
-- একই Group Message edit হবে
+- কোনো Personal DM যাবে না
+- নতুন Group Message যাবে না
+- কোনো success popup text দেখাবে না
+- একই Payment Instructions Message edit হবে
 - Button remove হবে
-- নিচে Payment Verified status যোগ হবে
+- Message-এর নিচে যোগ হবে:
+
+```text
+🔒 Payment Successfully Received
+
+🆔 Deal ID: #0001
+
+✅ Payment verified successfully.
+```
 
 Currency:
 
@@ -24,3 +31,15 @@ Currency:
 ```
 
 দিলে `200 $`
+
+## আপলোডের পরে জরুরি
+
+GitHub-এ এই V3.5-এর সব ফাইল replace করে Commit দিন।
+
+তারপর Render-এ:
+
+1. Manual Deploy
+2. Deploy latest commit
+3. Logs-এ `Infinity Deal Bot v3.5 started ✅` দেখা পর্যন্ত অপেক্ষা করুন
+
+পুরোনো Deal-এর Button নয়—Deploy শেষ হওয়ার পরে নতুন `/m` Deal বানিয়ে পরীক্ষা করুন।

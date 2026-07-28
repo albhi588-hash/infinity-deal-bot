@@ -64,7 +64,9 @@ async function isAdmin(ctx) {
 }
 
 async function deleteSilently(ctx) {
-  try { await ctx.deleteMessage(); } catch {}
+  try {
+    await ctx.deleteMessage();
+  } catch {}
 }
 
 function parseCreateCommand(text = "") {
@@ -93,6 +95,7 @@ async function nextDealId() {
     const snap = await transaction.get(counterRef);
     const lastDealId = snap.exists ? Number(snap.data().lastDealId || 0) : 0;
     const next = lastDealId + 1;
+
     transaction.set(counterRef, { lastDealId: next }, { merge: true });
     return formatDealId(next);
   });
@@ -181,10 +184,12 @@ bot.command("m", async (ctx) => {
     setTimeout(() => {
       ctx.telegram.deleteMessage(ctx.chat.id, warning.message_id).catch(() => {});
     }, 10000);
+
     return;
   }
 
   const dealId = await nextDealId();
+
   const deal = {
     dealId,
     amount: parsed.amount,
@@ -253,7 +258,11 @@ bot.action(/^paid:(#\d{4,})$/, async (ctx) => {
     disable_web_page_preview: true
   });
 
-  await ctx.answerCbQuery("✅ Payment verified successfully.");
+  // Telegram-এর loading animation বন্ধ করতে empty callback answer।
+  // কোনো popup text দেখাবে না।
+  try {
+    await ctx.answerCbQuery();
+  } catch {}
 });
 
 bot.on("my_chat_member", async (ctx) => {
@@ -263,7 +272,9 @@ bot.on("my_chat_member", async (ctx) => {
   const active = ["member", "administrator"].includes(status);
 
   if (active && String(ctx.chat.id) !== ALLOWED_GROUP_ID) {
-    try { await ctx.telegram.leaveChat(ctx.chat.id); } catch {}
+    try {
+      await ctx.telegram.leaveChat(ctx.chat.id);
+    } catch {}
   }
 });
 
@@ -272,11 +283,11 @@ bot.catch((error) => {
 });
 
 app.get("/", (_req, res) => {
-  res.send("Infinity Deal Bot v3.4 is running ✅");
+  res.send("Infinity Deal Bot v3.5 is running ✅");
 });
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, version: "3.4.0" });
+  res.json({ ok: true, version: "3.5.0" });
 });
 
 app.listen(PORT, async () => {
@@ -284,7 +295,7 @@ app.listen(PORT, async () => {
 
   try {
     await bot.launch({ dropPendingUpdates: true });
-    console.log("Infinity Deal Bot v3.4 started ✅");
+    console.log("Infinity Deal Bot v3.5 started ✅");
   } catch (error) {
     console.error("Launch error:", error);
   }
