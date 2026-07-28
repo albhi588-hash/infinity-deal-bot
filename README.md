@@ -1,34 +1,26 @@
-# Infinity Deal Bot V3.3
+# Infinity Deal Bot V3.4
 
-নতুন Currency Command:
+এই সংস্করণে কোনো Private DM নেই।
 
-```text
-/m 200 @buyer @seller Seller Condition | Buyer Condition
-```
+`🔒 Payment Received` Button চাপলে:
 
-এতে দেখাবে:
-
-```text
-Amount: 200 ৳
-```
-
-আর:
-
-```text
-/m 200d @buyer @seller Seller Condition | Buyer Condition
-```
-
-এতে দেখাবে:
-
-```text
-Amount: 200 $
-```
-
-`d` ছোট বা বড় হাতের—দুটিই কাজ করবে।
-
-Payment Received Button:
-
-- শুধু Group Admin চাপতে পারবেন
+- শুধু Group Admin ব্যবহার করতে পারবেন
 - নতুন Message পাঠাবে না
-- একই Message Edit হবে
-- Button Remove হবে
+- Personal Chat-এ কিছু পাঠাবে না
+- একই Group Message edit হবে
+- Button remove হবে
+- নিচে Payment Verified status যোগ হবে
+
+Currency:
+
+```text
+/m 200 ...
+```
+
+দিলে `200 ৳`
+
+```text
+/m 200d ...
+```
+
+দিলে `200 $`

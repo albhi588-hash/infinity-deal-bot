@@ -78,7 +78,6 @@ function parseCreateCommand(text = "") {
 
   return {
     amount: match[1],
-    currency: isDollar ? "USD" : "BDT",
     currencySymbol: isDollar ? "$" : "৳",
     buyer: match[3],
     seller: match[4],
@@ -94,7 +93,6 @@ async function nextDealId() {
     const snap = await transaction.get(counterRef);
     const lastDealId = snap.exists ? Number(snap.data().lastDealId || 0) : 0;
     const next = lastDealId + 1;
-
     transaction.set(counterRef, { lastDealId: next }, { merge: true });
     return formatDealId(next);
   });
@@ -190,7 +188,6 @@ bot.command("m", async (ctx) => {
   const deal = {
     dealId,
     amount: parsed.amount,
-    currency: parsed.currency,
     currencySymbol: parsed.currencySymbol,
     buyer: parsed.buyer,
     seller: parsed.seller,
@@ -251,21 +248,12 @@ bot.action(/^paid:(#\d{4,})$/, async (ctx) => {
     paidAt: admin.firestore.FieldValue.serverTimestamp()
   }, { merge: true });
 
-  try {
-    await ctx.editMessageText(paidEditedText(deal), {
-      parse_mode: "HTML",
-      disable_web_page_preview: true
-    });
-  } catch (error) {
-    console.error("Message edit failed:", error.message);
-    return ctx.answerCbQuery("Message edit করা যায়নি।", {
-      show_alert: true
-    });
-  }
-
-  await ctx.answerCbQuery("✅ Payment verified successfully.", {
-    show_alert: true
+  await ctx.editMessageText(paidEditedText(deal), {
+    parse_mode: "HTML",
+    disable_web_page_preview: true
   });
+
+  await ctx.answerCbQuery("✅ Payment verified successfully.");
 });
 
 bot.on("my_chat_member", async (ctx) => {
@@ -284,11 +272,11 @@ bot.catch((error) => {
 });
 
 app.get("/", (_req, res) => {
-  res.send("Infinity Deal Bot v3.3 is running ✅");
+  res.send("Infinity Deal Bot v3.4 is running ✅");
 });
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, version: "3.3.0" });
+  res.json({ ok: true, version: "3.4.0" });
 });
 
 app.listen(PORT, async () => {
@@ -296,7 +284,7 @@ app.listen(PORT, async () => {
 
   try {
     await bot.launch({ dropPendingUpdates: true });
-    console.log("Infinity Deal Bot v3.3 started ✅");
+    console.log("Infinity Deal Bot v3.4 started ✅");
   } catch (error) {
     console.error("Launch error:", error);
   }

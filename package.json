@@ -1,8 +1,8 @@
 {
-  "name": "infinity-deal-bot-v3-currency",
-  "version": "3.3.0",
+  "name": "infinity-deal-bot-v3-group-only",
+  "version": "3.4.0",
   "private": true,
-  "description": "Infinity Deal Bot with BDT and USD command support",
+  "description": "Infinity Deal Bot - group-only payment verification",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
