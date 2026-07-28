@@ -1,13 +1,13 @@
-# Infinity Deal Bot V3.1
+# Infinity Deal Bot V3.2
 
-এই সংস্করণে:
+এই আপডেটে:
 
-- Buyer/Seller-কে Bot Start করতে হবে না
-- Buyer/Seller-কে কোনো Private Message পাঠানো হবে না
 - `🔒 Payment Received` Button শুধু Group Admin চাপতে পারবেন
-- সাধারণ Member চাপলে Alert দেখাবে: শুধু Admin ব্যবহার করতে পারবেন
-- Admin Button চাপলে Button সরিয়ে যাবে
-- তারপর একই Group-এ এই Message পাঠাবে:
+- সাধারণ Member চাপলে Admin-only Alert দেখাবে
+- Admin চাপলে নতুন কোনো Message পাঠাবে না
+- একই Payment Instructions Message edit হবে
+- Button সম্পূর্ণ Remove হবে
+- Message-এর নিচে যোগ হবে:
 
 ```text
 🔒 Payment Successfully Received
@@ -17,6 +17,6 @@
 ✅ Payment verified successfully.
 ```
 
-- একই Deal দ্বিতীয়বার Paid করা যাবে না
+- Buyer/Seller-কে কোনো Private Message যাবে না
 - `/m` command Auto Delete হবে
-- Deal ID Firebase-এ স্থায়ীভাবে সংরক্ষিত থাকবে
+- Deal ID Firebase-এ স্থায়ী থাকবে

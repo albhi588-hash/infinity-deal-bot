@@ -130,11 +130,13 @@ function paymentText(deal) {
   ].join("\n");
 }
 
-function paidGroupText(dealId) {
+function paidEditedText(deal) {
   return [
+    paymentText(deal),
+    "",
     "🔒 <b>Payment Successfully Received</b>",
     "",
-    `🆔 Deal ID: <code>${esc(dealId)}</code>`,
+    `🆔 Deal ID: <code>${esc(deal.dealId)}</code>`,
     "",
     "✅ Payment verified successfully."
   ].join("\n");
@@ -243,18 +245,16 @@ bot.action(/^paid:(#\d{4,})$/, async (ctx) => {
   }, { merge: true });
 
   try {
-    await ctx.editMessageReplyMarkup({ inline_keyboard: [] });
-  } catch {}
-
-  await ctx.telegram.sendMessage(
-    ctx.chat.id,
-    paidGroupText(dealId),
-    {
+    await ctx.editMessageText(paidEditedText(deal), {
       parse_mode: "HTML",
-      reply_to_message_id: ctx.callbackQuery.message.message_id,
-      allow_sending_without_reply: true
-    }
-  );
+      disable_web_page_preview: true
+    });
+  } catch (error) {
+    console.error("Message edit failed:", error.message);
+    return ctx.answerCbQuery("Message edit করা যায়নি।", {
+      show_alert: true
+    });
+  }
 
   await ctx.answerCbQuery("✅ Payment verified successfully.", {
     show_alert: true
@@ -277,11 +277,11 @@ bot.catch((error) => {
 });
 
 app.get("/", (_req, res) => {
-  res.send("Infinity Deal Bot v3.1 is running ✅");
+  res.send("Infinity Deal Bot v3.2 is running ✅");
 });
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, version: "3.1.0" });
+  res.json({ ok: true, version: "3.2.0" });
 });
 
 app.listen(PORT, async () => {
@@ -289,7 +289,7 @@ app.listen(PORT, async () => {
 
   try {
     await bot.launch({ dropPendingUpdates: true });
-    console.log("Infinity Deal Bot v3.1 started ✅");
+    console.log("Infinity Deal Bot v3.2 started ✅");
   } catch (error) {
     console.error("Launch error:", error);
   }

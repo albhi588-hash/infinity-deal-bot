@@ -1,8 +1,8 @@
 {
-  "name": "infinity-deal-bot-v3-admin-group",
-  "version": "3.1.0",
+  "name": "infinity-deal-bot-v3-edit-message",
+  "version": "3.2.0",
   "private": true,
-  "description": "Infinity Deal Bot - admin-only payment button and group confirmation",
+  "description": "Infinity Deal Bot - admin-only payment button edits same message",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
