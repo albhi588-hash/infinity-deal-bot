@@ -58,6 +58,10 @@ function usernameKey(username = "") {
   return String(username).replace(/^@/, "").trim().toLowerCase();
 }
 
+function normalizeDigits(text = "") {
+  return String(text).replace(/[^\d]/g, "");
+}
+
 function formatDealId(number) {
   return `#${String(number).padStart(4, "0")}`;
 }
@@ -75,7 +79,7 @@ async function isAdmin(ctx) {
   }
 }
 
-async function deleteSilently(ctx) {
+async function deleteMessageSilently(ctx) {
   try { await ctx.deleteMessage(); } catch {}
 }
 
@@ -165,22 +169,18 @@ function decisionLabel(value) {
 
 function releaseDecisionText(deal) {
   const r = deal.release;
-  const mismatch =
+  const bothDone =
     r.buyerDecision !== "pending" &&
-    r.sellerDecision !== "pending" &&
-    r.buyerDecision !== r.sellerDecision;
-
-  const bothAccepted =
-    r.buyerDecision === "accepted" &&
-    r.sellerDecision === "accepted";
+    r.sellerDecision !== "pending";
 
   let status = "🟡 Waiting for Decisions";
-  if (mismatch) status = "⏳ Awaiting Admin Decision";
-  if (bothAccepted) status = "🟢 Both Parties Accepted";
-  if (
-    r.buyerDecision === "declined" &&
-    r.sellerDecision === "declined"
-  ) status = "🔴 Both Parties Declined";
+  if (bothDone && r.buyerDecision !== r.sellerDecision) {
+    status = "⏳ Awaiting Admin Decision";
+  } else if (r.buyerDecision === "accepted" && r.sellerDecision === "accepted") {
+    status = "🟢 Both Parties Accepted";
+  } else if (r.buyerDecision === "declined" && r.sellerDecision === "declined") {
+    status = "🔴 Both Parties Declined";
+  }
 
   return [
     "🤝 <b>DEAL DETAILS</b> 🤝",
@@ -233,15 +233,11 @@ function methodButtons(dealId, flow) {
   ]);
 }
 
-function methodRequestText(deal, flow) {
+function methodPromptText(deal, flow, methodLabel) {
   const target = flow === "release" ? deal.seller : deal.buyer;
   const title = flow === "release"
     ? "💳 <b>Withdrawal Details Required</b>"
     : "💳 <b>Refund Details Required</b>";
-
-  const action = flow === "release"
-    ? "পেমেন্ট গ্রহণের"
-    : "Refund গ্রহণের";
 
   return [
     title,
@@ -249,14 +245,13 @@ function methodRequestText(deal, flow) {
     `🆔 Deal ID: <code>${esc(deal.dealId)}</code>`,
     `💰 Amount: <b>${esc(deal.amount)} ${esc(deal.currencySymbol)}</b>`,
     "",
-    `${esc(target)}, আপনার ${action} মাধ্যম নির্বাচন করুন:`
+    `${esc(target)}, please enter your ${esc(methodLabel)} number.`
   ].join("\n");
 }
 
 function detailsText(deal) {
   const p = deal.payout;
-  const isRelease = p.flow === "release";
-  const title = isRelease
+  const title = p.flow === "release"
     ? "💳 <b>DEAL WITHDRAWAL DETAILS</b>"
     : "💳 <b>DEAL REFUND DETAILS</b>";
 
@@ -268,7 +263,7 @@ function detailsText(deal) {
     `👤 Buyer: ${esc(deal.buyer)}`,
     "",
     `💰 Amount: <b>${esc(deal.amount)} ${esc(deal.currencySymbol)}</b>`,
-    `📊 Status: <b>🟢 Active</b>`,
+    "📊 Status: <b>🟢 Active</b>",
     `💳 Method: <b>${esc(p.methodLabel)}</b>`,
     `📱 Number: <code>${esc(p.number)}</code>`,
     "━━━━━━━━━━━━━━━━━━━━━━",
@@ -277,15 +272,12 @@ function detailsText(deal) {
 }
 
 function completedText(deal) {
-  const isRelease = deal.payout.flow === "release";
-  const title = isRelease
-    ? "✅ <b>Deal Completed!</b> ✅"
-    : "✅ <b>Refund Completed!</b> ✅";
-
-  const status = isRelease ? "🟢 Completed" : "🟢 Refunded";
+  const releaseFlow = deal.payout.flow === "release";
 
   return [
-    title,
+    releaseFlow
+      ? "✅ <b>Deal Completed!</b> ✅"
+      : "✅ <b>Refund Completed!</b> ✅",
     "━━━━━━━━━━━━━━━━━━━━━━",
     `🆔 Deal ID: <code>${esc(deal.dealId)}</code>`,
     `💰 Amount: <b>${esc(deal.amount)} ${esc(deal.currencySymbol)}</b>`,
@@ -298,9 +290,20 @@ function completedText(deal) {
     "📝 <b>Buyer's Condition:</b>",
     esc(deal.buyerCondition),
     "",
-    `📊 Status: <b>${status}</b>`,
+    `📊 Status: <b>${releaseFlow ? "🟢 Completed" : "🟢 Refunded"}</b>`,
     "━━━━━━━━━━━━━━━━━━━━━━"
   ].join("\n");
+}
+
+function findWaitingDealForUser(data, username, chatId) {
+  const key = usernameKey(username);
+  return Object.values(data.deals).find((deal) => {
+    if (!deal.payout || deal.payout.stage !== "waiting_number") return false;
+    if (String(deal.groupId) !== String(chatId)) return false;
+
+    const target = deal.payout.flow === "release" ? deal.seller : deal.buyer;
+    return usernameKey(target) === key;
+  });
 }
 
 bot.start(async (ctx) => {
@@ -313,22 +316,14 @@ bot.command("m", async (ctx) => {
     return ctx.reply("এই কমান্ডটি শুধু অনুমোদিত গ্রুপে ব্যবহার করা যাবে।");
   }
   if (!isAllowedGroup(ctx.chat.id) || !(await isAdmin(ctx))) {
-    await deleteSilently(ctx);
+    await deleteMessageSilently(ctx);
     return;
   }
 
   const parsed = parseCreateCommand(ctx.message.text || "");
-  await deleteSilently(ctx);
+  await deleteMessageSilently(ctx);
 
-  if (!parsed) {
-    const w = await ctx.telegram.sendMessage(
-      ctx.chat.id,
-      "❌ সঠিক ফরম্যাট:\n<code>/m 200 @buyer @seller Seller Condition | Buyer Condition</code>",
-      { parse_mode: "HTML" }
-    );
-    setTimeout(() => ctx.telegram.deleteMessage(ctx.chat.id, w.message_id).catch(() => {}), 10000);
-    return;
-  }
+  if (!parsed) return;
 
   const data = loadData();
   data.lastDealId += 1;
@@ -360,14 +355,13 @@ bot.command("m", async (ctx) => {
 });
 
 bot.action(/^paid:(#\d{4,})$/, async (ctx) => {
-  if (!isAllowedGroup(ctx.chat.id)) return;
   if (!(await isAdmin(ctx))) {
     return ctx.answerCbQuery("শুধু Admin ব্যবহার করতে পারবেন।", { show_alert: true });
   }
 
   const data = loadData();
   const deal = data.deals[ctx.match[1]];
-  if (!deal) return ctx.answerCbQuery("Deal পাওয়া যায়নি।", { show_alert: true });
+  if (!deal) return;
 
   deal.status = "paid";
   deal.paidAt = new Date().toISOString();
@@ -383,22 +377,18 @@ bot.action(/^paid:(#\d{4,})$/, async (ctx) => {
 bot.command("release", async (ctx) => {
   if (ctx.chat.type === "private") return;
   if (!isAllowedGroup(ctx.chat.id) || !(await isAdmin(ctx))) {
-    await deleteSilently(ctx);
+    await deleteMessageSilently(ctx);
     return;
   }
 
   const m = (ctx.message.text || "").match(/^\/release(?:@\w+)?\s+#?(\d+)$/i);
-  await deleteSilently(ctx);
+  await deleteMessageSilently(ctx);
   if (!m) return;
 
   const dealId = `#${String(m[1]).padStart(4, "0")}`;
   const data = loadData();
   const deal = data.deals[dealId];
-
-  if (!deal) return ctx.telegram.sendMessage(ctx.chat.id, "❌ Deal পাওয়া যায়নি।");
-  if (deal.status !== "paid") {
-    return ctx.telegram.sendMessage(ctx.chat.id, "❌ আগে Payment Verify করতে হবে।");
-  }
+  if (!deal || deal.status !== "paid") return;
 
   deal.release = {
     buyerDecision: "pending",
@@ -426,9 +416,7 @@ bot.action(/^party_(accept|decline):(#\d{4,})$/, async (ctx) => {
 
   const data = loadData();
   const deal = data.deals[ctx.match[2]];
-  if (!deal?.release) {
-    return ctx.answerCbQuery("Release request পাওয়া যায়নি।", { show_alert: true });
-  }
+  if (!deal?.release) return;
 
   const key = usernameKey(ctx.from?.username || "");
   const buyerKey = usernameKey(deal.buyer);
@@ -463,31 +451,30 @@ bot.action(/^party_(accept|decline):(#\d{4,})$/, async (ctx) => {
     deal.release.buyerDecision === "accepted" &&
     deal.release.sellerDecision === "accepted";
 
-  let markup = decisionButtons(deal.dealId).reply_markup;
-
-  if (mismatch || (
-      bothDone &&
-      deal.release.buyerDecision === "declined" &&
-      deal.release.sellerDecision === "declined"
-    )) {
-    markup = adminDecisionButtons(deal.dealId).reply_markup;
-  }
-
   if (bothAccepted) {
     deal.payout = { flow: "release", stage: "choose_method" };
     saveData(data);
 
-    await ctx.editMessageText(methodRequestText(deal, "release"), {
-      parse_mode: "HTML",
-      reply_markup: methodButtons(deal.dealId, "release").reply_markup
-    });
+    await ctx.editMessageText(
+      [
+        "💳 <b>Withdrawal Details Required</b>",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        `${esc(deal.seller)}, আপনার পেমেন্ট মাধ্যম নির্বাচন করুন:`
+      ].join("\n"),
+      {
+        parse_mode: "HTML",
+        reply_markup: methodButtons(deal.dealId, "release").reply_markup
+      }
+    );
     try { await ctx.answerCbQuery(); } catch {}
     return;
   }
 
   await ctx.editMessageText(releaseDecisionText(deal), {
     parse_mode: "HTML",
-    reply_markup: markup
+    reply_markup: mismatch
+      ? adminDecisionButtons(deal.dealId).reply_markup
+      : decisionButtons(deal.dealId).reply_markup
   });
 
   try { await ctx.answerCbQuery(); } catch {}
@@ -506,10 +493,23 @@ bot.action(/^admin_(release|refund):(#\d{4,})$/, async (ctx) => {
   deal.payout = { flow, stage: "choose_method" };
   saveData(data);
 
-  await ctx.editMessageText(methodRequestText(deal, flow), {
-    parse_mode: "HTML",
-    reply_markup: methodButtons(deal.dealId, flow).reply_markup
-  });
+  const target = flow === "release" ? deal.seller : deal.buyer;
+  const title = flow === "release"
+    ? "💳 <b>Withdrawal Details Required</b>"
+    : "💳 <b>Refund Details Required</b>";
+
+  await ctx.editMessageText(
+    [
+      title,
+      "━━━━━━━━━━━━━━━━━━━━━━",
+      `${esc(target)}, আপনার পেমেন্ট মাধ্যম নির্বাচন করুন:`
+    ].join("\n"),
+    {
+      parse_mode: "HTML",
+      reply_markup: methodButtons(deal.dealId, flow).reply_markup
+    }
+  );
+
   try { await ctx.answerCbQuery(); } catch {}
 });
 
@@ -539,53 +539,63 @@ bot.action(/^method:(release|refund):(bkash|nagad|rocket|binance):(#\d{4,})$/, a
   deal.payout.method = method;
   deal.payout.methodLabel = labels[method];
   deal.payout.stage = "waiting_number";
+  deal.payout.waitingForUsername = usernameKey(target);
   saveData(data);
 
   await ctx.editMessageText(
-    [
-      methodRequestText(deal, flow),
-      "",
-      `✅ Selected Method: <b>${labels[method]}</b>`,
-      "",
-      `${esc(target)}, নম্বর দিতে লিখুন:`,
-      `<code>/details ${esc(deal.dealId)} আপনার_নম্বর</code>`
-    ].join("\n"),
+    methodPromptText(deal, flow, labels[method]),
     {
       parse_mode: "HTML",
       reply_markup: { inline_keyboard: [] }
     }
   );
+
   try { await ctx.answerCbQuery(); } catch {}
 });
 
-bot.command("details", async (ctx) => {
+bot.on("text", async (ctx) => {
   if (ctx.chat.type === "private") return;
+  if (!isAllowedGroup(ctx.chat.id)) return;
+  if (!ctx.from?.username) return;
 
-  const m = (ctx.message.text || "").match(
-    /^\/details(?:@\w+)?\s+#?(\d+)\s+([A-Za-z0-9+\-_.]+)$/i
-  );
-  if (!m) return;
+  const text = String(ctx.message.text || "").trim();
+  if (!text || text.startsWith("/")) return;
 
-  const dealId = `#${String(m[1]).padStart(4, "0")}`;
-  const number = m[2];
   const data = loadData();
-  const deal = data.deals[dealId];
+  const deal = findWaitingDealForUser(data, ctx.from.username, ctx.chat.id);
+  if (!deal) return;
 
-  if (!deal?.payout || deal.payout.stage !== "waiting_number") {
-    await deleteSilently(ctx);
-    return;
+  const digits = normalizeDigits(text);
+  const method = deal.payout.method;
+
+  const validMobile = /^01\d{9}$/.test(digits);
+  const validBinance = /^[A-Za-z0-9]{4,30}$/.test(text.replace(/\s+/g, ""));
+
+  if (method === "binance") {
+    if (!validBinance) {
+      const warn = await ctx.reply("❌ Please enter a valid Binance Pay ID.");
+      setTimeout(() => {
+        ctx.telegram.deleteMessage(ctx.chat.id, warn.message_id).catch(() => {});
+      }, 5000);
+      return;
+    }
+    deal.payout.number = text.replace(/\s+/g, "");
+  } else {
+    if (!validMobile) {
+      const warn = await ctx.reply("❌ Please enter a valid 11-digit mobile number.");
+      setTimeout(() => {
+        ctx.telegram.deleteMessage(ctx.chat.id, warn.message_id).catch(() => {});
+      }, 5000);
+      return;
+    }
+    deal.payout.number = digits;
   }
 
-  const target = deal.payout.flow === "release" ? deal.seller : deal.buyer;
-  if (usernameKey(ctx.from?.username || "") !== usernameKey(target)) {
-    await deleteSilently(ctx);
-    return;
-  }
+  await deleteMessageSilently(ctx);
 
-  await deleteSilently(ctx);
-
-  deal.payout.number = number;
   deal.payout.stage = "ready_for_admin";
+  deal.payout.receivedFrom = ctx.from.id;
+  deal.payout.receivedAt = new Date().toISOString();
   saveData(data);
 
   await ctx.telegram.editMessageText(
@@ -596,7 +606,7 @@ bot.command("details", async (ctx) => {
     {
       parse_mode: "HTML",
       reply_markup: Markup.inlineKeyboard([
-        [Markup.button.callback("✅ Complete Payment", `complete:${dealId}`)]
+        [Markup.button.callback("✅ Complete Payment", `complete:${deal.dealId}`)]
       ]).reply_markup
     }
   );
@@ -633,14 +643,14 @@ bot.on("my_chat_member", async (ctx) => {
 
 bot.catch((error) => console.error("Bot error:", error));
 
-app.get("/", (_req, res) => res.send("Infinity Deal Bot V4.4 is running ✅"));
-app.get("/health", (_req, res) => res.json({ ok: true, version: "4.4.0" }));
+app.get("/", (_req, res) => res.send("Infinity Deal Bot V4.5 is running ✅"));
+app.get("/health", (_req, res) => res.json({ ok: true, version: "4.5.0" }));
 
 app.listen(PORT, async () => {
   console.log(`Web server running on port ${PORT}`);
   try {
     await bot.launch({ dropPendingUpdates: true });
-    console.log("Infinity Deal Bot V4.4 started ✅");
+    console.log("Infinity Deal Bot V4.5 started ✅");
   } catch (error) {
     console.error("Bot launch failed:", error);
   }

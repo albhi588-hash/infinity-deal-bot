@@ -1,8 +1,8 @@
 {
-  "name": "infinity-deal-bot-v4-4-release-flow",
-  "version": "4.4.0",
+  "name": "infinity-deal-bot-v4-5-auto-number",
+  "version": "4.5.0",
   "private": true,
-  "description": "Infinity Deal Bot V4.4 - public release/refund flow with admin completion",
+  "description": "Infinity Deal Bot V4.5 - automatic payout number capture",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
