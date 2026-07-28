@@ -1,8 +1,8 @@
 {
-  "name": "infinity-deal-bot-v4",
-  "version": "4.0.0",
+  "name": "infinity-deal-bot-v4-1",
+  "version": "4.1.0",
   "private": true,
-  "description": "Infinity Deal Bot V4 - no Firebase, no DM, admin-only controls",
+  "description": "Infinity Deal Bot V4.1 - hide all buttons after payment received",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

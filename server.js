@@ -34,7 +34,6 @@ function loadData() {
     }
 
     const parsed = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
-
     return {
       lastDealId: Number(parsed.lastDealId || 0),
       deals: parsed.deals || {}
@@ -96,10 +95,6 @@ function parseCreateCommand(text = "") {
     currencySymbol: isDollar ? "$" : "৳",
     buyer: match[3],
     seller: match[4],
-
-    // আপনার চাওয়া বর্তমান format:
-    // প্রথম condition Seller-এর নিচে
-    // | এর পরের condition Buyer-এর নিচে
     sellerCondition: match[5].trim(),
     buyerCondition: match[6].trim()
   };
@@ -110,7 +105,7 @@ function nextDeal(data) {
   return formatDealId(data.lastDealId);
 }
 
-function basePaymentText(deal) {
+function paymentText(deal) {
   return [
     "💳 <b>PAYMENT INSTRUCTIONS</b> 💳",
     "━━━━━━━━━━━━━━━━━━━━━━",
@@ -144,69 +139,16 @@ function basePaymentText(deal) {
   ].join("\n");
 }
 
-function statusBlock(deal) {
-  if (deal.status === "paid") {
-    return [
-      "",
-      "🔒 <b>Payment Successfully Received</b>",
-      "",
-      `🆔 Deal ID: <code>${esc(deal.dealId)}</code>`,
-      "",
-      "✅ Payment verified successfully."
-    ].join("\n");
-  }
-
-  if (deal.status === "released") {
-    return [
-      "",
-      "✅ <b>Deal Completed Successfully</b>",
-      "",
-      `🆔 Deal ID: <code>${esc(deal.dealId)}</code>`,
-      "",
-      "✅ Payment released successfully."
-    ].join("\n");
-  }
-
-  if (deal.status === "cancelled") {
-    return [
-      "",
-      "❌ <b>Deal Cancelled</b>",
-      "",
-      `🆔 Deal ID: <code>${esc(deal.dealId)}</code>`,
-      "",
-      "The deal has been cancelled by an admin."
-    ].join("\n");
-  }
-
-  return "";
-}
-
-function fullDealText(deal) {
-  return basePaymentText(deal) + statusBlock(deal);
-}
-
-function buttonsFor(deal) {
-  if (deal.status === "waiting_payment") {
-    return Markup.inlineKeyboard([
-      [Markup.button.callback("🔒 Payment Received", `paid:${deal.dealId}`)],
-      [Markup.button.callback("❌ Cancel Deal", `cancel:${deal.dealId}`)]
-    ]);
-  }
-
-  if (deal.status === "paid") {
-    return Markup.inlineKeyboard([
-      [Markup.button.callback("✅ Release Payment", `release:${deal.dealId}`)],
-      [Markup.button.callback("❌ Cancel Deal", `cancel:${deal.dealId}`)]
-    ]);
-  }
-
-  return Markup.inlineKeyboard([]);
-}
-
-async function answerEmpty(ctx) {
-  try {
-    await ctx.answerCbQuery();
-  } catch {}
+function paidText(deal) {
+  return [
+    paymentText(deal),
+    "",
+    "🔒 <b>Payment Successfully Received</b>",
+    "",
+    `🆔 Deal ID: <code>${esc(deal.dealId)}</code>`,
+    "",
+    "✅ Payment verified successfully."
+  ].join("\n");
 }
 
 bot.start(async (ctx) => {
@@ -272,11 +214,13 @@ bot.command("m", async (ctx) => {
 
   const sent = await ctx.telegram.sendMessage(
     ctx.chat.id,
-    fullDealText(deal),
+    paymentText(deal),
     {
       parse_mode: "HTML",
       disable_web_page_preview: true,
-      ...buttonsFor(deal)
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("🔒 Payment Received", `paid:${deal.dealId}`)]
+      ])
     }
   );
 
@@ -284,9 +228,8 @@ bot.command("m", async (ctx) => {
   saveData(data);
 });
 
-bot.action(/^(paid|release|cancel):(#\d{4,})$/, async (ctx) => {
-  const action = ctx.match[1];
-  const dealId = ctx.match[2];
+bot.action(/^paid:(#\d{4,})$/, async (ctx) => {
+  const dealId = ctx.match[1];
 
   if (!isAllowedGroup(ctx.chat.id)) {
     return ctx.answerCbQuery("এই গ্রুপ অনুমোদিত নয়।", {
@@ -310,52 +253,29 @@ bot.action(/^(paid|release|cancel):(#\d{4,})$/, async (ctx) => {
     });
   }
 
-  if (action === "paid") {
-    if (deal.status !== "waiting_payment") {
-      return ctx.answerCbQuery("এই Deal ইতোমধ্যে Update হয়েছে।", {
-        show_alert: true
-      });
-    }
-
-    deal.status = "paid";
-    deal.paidBy = ctx.from.id;
-    deal.paidAt = new Date().toISOString();
+  if (deal.status === "paid") {
+    return ctx.answerCbQuery("Payment আগেই verified হয়েছে।", {
+      show_alert: true
+    });
   }
 
-  if (action === "release") {
-    if (deal.status !== "paid") {
-      return ctx.answerCbQuery("আগে Payment Received করতে হবে।", {
-        show_alert: true
-      });
-    }
-
-    deal.status = "released";
-    deal.releasedBy = ctx.from.id;
-    deal.releasedAt = new Date().toISOString();
-  }
-
-  if (action === "cancel") {
-    if (deal.status === "released" || deal.status === "cancelled") {
-      return ctx.answerCbQuery("এই Deal ইতোমধ্যে শেষ হয়েছে।", {
-        show_alert: true
-      });
-    }
-
-    deal.status = "cancelled";
-    deal.cancelledBy = ctx.from.id;
-    deal.cancelledAt = new Date().toISOString();
-  }
+  deal.status = "paid";
+  deal.paidBy = ctx.from.id;
+  deal.paidAt = new Date().toISOString();
 
   data.deals[dealId] = deal;
   saveData(data);
 
-  await ctx.editMessageText(fullDealText(deal), {
+  // একই মেসেজ edit হবে এবং কোনো button রাখা হবে না।
+  await ctx.editMessageText(paidText(deal), {
     parse_mode: "HTML",
     disable_web_page_preview: true,
-    ...buttonsFor(deal)
+    reply_markup: { inline_keyboard: [] }
   });
 
-  await answerEmpty(ctx);
+  try {
+    await ctx.answerCbQuery();
+  } catch {}
 });
 
 bot.on("my_chat_member", async (ctx) => {
@@ -374,15 +294,16 @@ bot.catch((error) => {
 });
 
 app.get("/", (_req, res) => {
-  res.send("Infinity Deal Bot V4 is running ✅");
+  res.send("Infinity Deal Bot V4.1 is running ✅");
 });
 
 app.get("/health", (_req, res) => {
   res.json({
     ok: true,
-    version: "4.0.0",
+    version: "4.1.0",
     firebase: false,
-    privateMessages: false
+    privateMessages: false,
+    buttonsAfterPayment: false
   });
 });
 
@@ -391,7 +312,7 @@ app.listen(PORT, async () => {
 
   try {
     await bot.launch({ dropPendingUpdates: true });
-    console.log("Infinity Deal Bot V4 started ✅");
+    console.log("Infinity Deal Bot V4.1 started ✅");
   } catch (error) {
     console.error("Bot launch failed:", error);
   }
