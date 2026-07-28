@@ -831,6 +831,83 @@ bot.action(/^complete:(#\d{4,})$/, async (ctx) => {
 });
 
 
+
+bot.command("about", async (ctx) => {
+  if (ctx.chat.type === "private") return;
+  if (!isAllowedGroup(ctx.chat.id) || !(await isAdmin(ctx))) {
+    await deleteMessageSilently(ctx);
+    return;
+  }
+
+  const match = (ctx.message.text || "").match(/^\/about(?:@\w+)?\s+@([A-Za-z0-9_]{5,})$/i);
+  await deleteMessageSilently(ctx);
+  if (!match) return;
+
+  const username = match[1];
+  const key = usernameKey(username);
+  const data = loadData();
+  const deals = Object.values(data.deals || {})
+    .filter(deal => [usernameKey(deal.buyer), usernameKey(deal.seller)].includes(key))
+    .sort((a, b) => Number(String(b.dealId || "").replace(/\D/g, "")) - Number(String(a.dealId || "").replace(/\D/g, "")));
+
+  if (!deals.length) {
+    return ctx.telegram.sendMessage(ctx.chat.id, `🔎 @${username}-এর কোনো Deal পাওয়া যায়নি।`);
+  }
+
+  const buyerDeals = deals.filter(deal => usernameKey(deal.buyer) === key);
+  const sellerDeals = deals.filter(deal => usernameKey(deal.seller) === key);
+  const completedDeals = deals.filter(deal => deal.status === "completed");
+  const activeDeals = deals.filter(deal => !["completed", "refunded", "cancelled"].includes(deal.status));
+  const cancelledDeals = deals.filter(deal => deal.status === "cancelled");
+  const refundedDeals = deals.filter(deal => deal.status === "refunded");
+
+  const statusIcon = status => ({
+    waiting_payment: "🟡",
+    paid: "🔵",
+    release_pending: "🟠",
+    completed: "✅",
+    refunded: "↩️",
+    cancelled: "❌"
+  }[status] || "⚪");
+
+  const header = [
+    `👤 <b>USER DEAL REPORT</b>`,
+    "━━━━━━━━━━━━━━━━━━━━━━",
+    `🔎 User: @${esc(username)}`,
+    `📊 Total Deals: <b>${deals.length}</b>`,
+    `🛒 As Buyer: <b>${buyerDeals.length}</b>`,
+    `💼 As Seller: <b>${sellerDeals.length}</b>`,
+    "",
+    `✅ Completed: <b>${completedDeals.length}</b>`,
+    `⏳ Active: <b>${activeDeals.length}</b>`,
+    `❌ Cancelled: <b>${cancelledDeals.length}</b>`,
+    `↩️ Refunded: <b>${refundedDeals.length}</b>`,
+    "━━━━━━━━━━━━━━━━━━━━━━",
+    "🆔 <b>Deal IDs</b>"
+  ].join("\n");
+
+  const dealLines = deals.map(deal => {
+    const role = usernameKey(deal.buyer) === key ? "Buyer" : "Seller";
+    return `${statusIcon(deal.status)} <code>${esc(deal.dealId)}</code> — ${role}`;
+  });
+
+  const messages = [];
+  let current = header;
+  for (const line of dealLines) {
+    if ((current + "\n" + line).length > 3900) {
+      messages.push(current);
+      current = `👤 <b>@${esc(username)} — Deal IDs (continued)</b>\n${line}`;
+    } else {
+      current += `\n${line}`;
+    }
+  }
+  messages.push(current);
+
+  for (const text of messages) {
+    await ctx.telegram.sendMessage(ctx.chat.id, text, { parse_mode: "HTML" });
+  }
+});
+
 bot.command("note", async (ctx) => {
   if (ctx.chat.type === "private") return;
   if (!isAllowedGroup(ctx.chat.id) || !(await isAdmin(ctx))) {

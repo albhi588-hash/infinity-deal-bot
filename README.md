@@ -53,3 +53,12 @@ Deploy শেষে Logs:
 - বাটন সরিয়ে দেওয়া হবে এবং Timeline ও Admin Log-এ `AUTO_CANCEL_TIMEOUT` যোগ হবে।
 - Bot restart হলেও saved deadline অনুযায়ী expired Deal cancel হবে।
 - সময় পরিবর্তন করতে ঐচ্ছিক Environment Variable: `PAYMENT_TIMEOUT_MINUTES=30`
+
+## User Deal Report (V5.2)
+Admin command:
+
+```text
+/about @username
+```
+
+Shows the user's total deals, Buyer/Seller counts, Completed/Active/Cancelled/Refunded counts, and all related Deal IDs.
