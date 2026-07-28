@@ -1,22 +1,34 @@
-# Infinity Deal Bot V3.2
+# Infinity Deal Bot V3.3
 
-এই আপডেটে:
-
-- `🔒 Payment Received` Button শুধু Group Admin চাপতে পারবেন
-- সাধারণ Member চাপলে Admin-only Alert দেখাবে
-- Admin চাপলে নতুন কোনো Message পাঠাবে না
-- একই Payment Instructions Message edit হবে
-- Button সম্পূর্ণ Remove হবে
-- Message-এর নিচে যোগ হবে:
+নতুন Currency Command:
 
 ```text
-🔒 Payment Successfully Received
-
-🆔 Deal ID: #0001
-
-✅ Payment verified successfully.
+/m 200 @buyer @seller Seller Condition | Buyer Condition
 ```
 
-- Buyer/Seller-কে কোনো Private Message যাবে না
-- `/m` command Auto Delete হবে
-- Deal ID Firebase-এ স্থায়ী থাকবে
+এতে দেখাবে:
+
+```text
+Amount: 200 ৳
+```
+
+আর:
+
+```text
+/m 200d @buyer @seller Seller Condition | Buyer Condition
+```
+
+এতে দেখাবে:
+
+```text
+Amount: 200 $
+```
+
+`d` ছোট বা বড় হাতের—দুটিই কাজ করবে।
+
+Payment Received Button:
+
+- শুধু Group Admin চাপতে পারবেন
+- নতুন Message পাঠাবে না
+- একই Message Edit হবে
+- Button Remove হবে

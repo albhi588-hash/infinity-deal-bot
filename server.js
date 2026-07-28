@@ -69,17 +69,21 @@ async function deleteSilently(ctx) {
 
 function parseCreateCommand(text = "") {
   const match = text.match(
-    /^\/m(?:@\w+)?\s+(\d+(?:\.\d{1,2})?)\s+(@[A-Za-z0-9_]{5,})\s+(@[A-Za-z0-9_]{5,})\s+([\s\S]+?)\s*\|\s*([\s\S]+)$/i
+    /^\/m(?:@\w+)?\s+(\d+(?:\.\d{1,2})?)(d)?\s+(@[A-Za-z0-9_]{5,})\s+(@[A-Za-z0-9_]{5,})\s+([\s\S]+?)\s*\|\s*([\s\S]+)$/i
   );
 
   if (!match) return null;
 
+  const isDollar = Boolean(match[2]);
+
   return {
     amount: match[1],
-    buyer: match[2],
-    seller: match[3],
-    sellerCondition: match[4].trim(),
-    buyerCondition: match[5].trim()
+    currency: isDollar ? "USD" : "BDT",
+    currencySymbol: isDollar ? "$" : "৳",
+    buyer: match[3],
+    seller: match[4],
+    sellerCondition: match[5].trim(),
+    buyerCondition: match[6].trim()
   };
 }
 
@@ -101,7 +105,7 @@ function paymentText(deal) {
     "💳 <b>PAYMENT INSTRUCTIONS</b> 💳",
     "━━━━━━━━━━━━━━━━━━━━━━",
     `🆔 Deal ID: <code>${esc(deal.dealId)}</code>`,
-    `💰 Amount: <b>${esc(deal.amount)} ৳</b>`,
+    `💰 Amount: <b>${esc(deal.amount)} ${esc(deal.currencySymbol)}</b>`,
     "",
     `👤 Seller: ${esc(deal.seller)}`,
     "📝 Condition:",
@@ -111,7 +115,7 @@ function paymentText(deal) {
     "📝 Condition:",
     esc(deal.buyerCondition),
     "━━━━━━━━━━━━━━━━━━━━━━",
-    `📢 ${esc(deal.buyer)} send <b>${esc(deal.amount)} ৳</b> to the Admin's wallet:`,
+    `📢 ${esc(deal.buyer)} send <b>${esc(deal.amount)} ${esc(deal.currencySymbol)}</b> to the Admin's wallet:`,
     "",
     "╭─ 💳 <b>Payment Details</b>",
     "│",
@@ -170,7 +174,8 @@ bot.command("m", async (ctx) => {
       [
         "❌ সঠিক ফরম্যাট:",
         "",
-        "<code>/m 200 @buyer @seller Seller Condition | Buyer Condition</code>"
+        "<code>/m 200 @buyer @seller Seller Condition | Buyer Condition</code>",
+        "<code>/m 200d @buyer @seller Seller Condition | Buyer Condition</code>"
       ].join("\n"),
       { parse_mode: "HTML" }
     );
@@ -185,6 +190,8 @@ bot.command("m", async (ctx) => {
   const deal = {
     dealId,
     amount: parsed.amount,
+    currency: parsed.currency,
+    currencySymbol: parsed.currencySymbol,
     buyer: parsed.buyer,
     seller: parsed.seller,
     sellerCondition: parsed.sellerCondition,
@@ -277,11 +284,11 @@ bot.catch((error) => {
 });
 
 app.get("/", (_req, res) => {
-  res.send("Infinity Deal Bot v3.2 is running ✅");
+  res.send("Infinity Deal Bot v3.3 is running ✅");
 });
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, version: "3.2.0" });
+  res.json({ ok: true, version: "3.3.0" });
 });
 
 app.listen(PORT, async () => {
@@ -289,7 +296,7 @@ app.listen(PORT, async () => {
 
   try {
     await bot.launch({ dropPendingUpdates: true });
-    console.log("Infinity Deal Bot v3.2 started ✅");
+    console.log("Infinity Deal Bot v3.3 started ✅");
   } catch (error) {
     console.error("Launch error:", error);
   }
