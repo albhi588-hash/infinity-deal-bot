@@ -147,6 +147,20 @@ function paymentText(deal) {
   ].join("\n");
 }
 
+function cancelledText(deal) {
+  return [
+    "❌ <b>Deal Cancelled</b>",
+    "━━━━━━━━━━━━━━━━━━━━━━",
+    `🆔 Deal ID: <code>${esc(deal.dealId)}</code>`,
+    `💰 Amount: <b>${esc(deal.amount)} ${esc(deal.currencySymbol)}</b>`,
+    `👤 Seller: ${esc(deal.seller)}`,
+    `👤 Buyer: ${esc(deal.buyer)}`,
+    "",
+    "📊 Status: <b>🔴 Cancelled</b>",
+    "━━━━━━━━━━━━━━━━━━━━━━"
+  ].join("\n");
+}
+
 function verifiedText(deal) {
   return [
     "✅ <b>Payment verified successfully.</b>",
@@ -375,6 +389,56 @@ bot.action(/^paid:(#\d{4,})$/, async (ctx) => {
     reply_markup: { inline_keyboard: [] }
   });
   try { await ctx.answerCbQuery(); } catch {}
+});
+
+bot.command("cancel", async (ctx) => {
+  if (ctx.chat.type === "private") return;
+  if (!isAllowedGroup(ctx.chat.id) || !(await isAdmin(ctx))) {
+    await deleteMessageSilently(ctx);
+    return;
+  }
+
+  const match = (ctx.message.text || "").match(/^\/cancel(?:@\w+)?\s+#?(\d+)$/i);
+  await deleteMessageSilently(ctx);
+  if (!match) return;
+
+  const dealId = `#${String(match[1]).padStart(4, "0")}`;
+  const data = loadData();
+  const deal = data.deals[dealId];
+  if (!deal || ["completed", "refunded", "cancelled"].includes(deal.status)) return;
+
+  deal.status = "cancelled";
+  deal.cancelledAt = new Date().toISOString();
+  deal.cancelledBy = ctx.from.id;
+  saveData(data);
+
+  const messageIds = [...new Set([
+    deal.groupMessageId,
+    deal.release?.messageId
+  ].filter(Boolean))];
+
+  let edited = false;
+  for (const messageId of messageIds) {
+    try {
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        messageId,
+        undefined,
+        cancelledText(deal),
+        {
+          parse_mode: "HTML",
+          reply_markup: { inline_keyboard: [] }
+        }
+      );
+      edited = true;
+    } catch {}
+  }
+
+  if (!edited) {
+    await ctx.telegram.sendMessage(ctx.chat.id, cancelledText(deal), {
+      parse_mode: "HTML"
+    });
+  }
 });
 
 bot.command("release", async (ctx) => {
