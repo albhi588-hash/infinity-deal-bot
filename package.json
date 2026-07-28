@@ -1,8 +1,8 @@
 {
-  "name": "infinity-deal-bot-v3-5-clean",
-  "version": "3.5.0",
+  "name": "infinity-deal-bot-v4",
+  "version": "4.0.0",
   "private": true,
-  "description": "Infinity Deal Bot - same-message verification, no DM, no popup text",
+  "description": "Infinity Deal Bot V4 - no Firebase, no DM, admin-only controls",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -13,7 +13,6 @@
   "dependencies": {
     "dotenv": "^16.4.5",
     "express": "^4.21.1",
-    "firebase-admin": "^13.0.2",
     "telegraf": "^4.16.3"
   }
 }

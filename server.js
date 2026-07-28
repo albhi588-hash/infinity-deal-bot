@@ -1,16 +1,16 @@
 const express = require("express");
+const fs = require("fs");
+const path = require("path");
 const { Telegraf, Markup } = require("telegraf");
-const admin = require("firebase-admin");
 require("dotenv").config();
 
-const BOT_TOKEN = process.env.BOT_TOKEN;
+const BOT_TOKEN = String(process.env.BOT_TOKEN || "").trim();
 const ALLOWED_GROUP_ID = String(process.env.ALLOWED_GROUP_ID || "").trim();
 
 const BKASH = process.env.BKASH || "01571092111";
 const NAGAD = process.env.NAGAD || "01571092111";
 const ROCKET = process.env.ROCKET || "01571092111";
 const BINANCE_PAY_ID = process.env.BINANCE_PAY_ID || "784264674";
-const FIREBASE_SERVICE_ACCOUNT = process.env.FIREBASE_SERVICE_ACCOUNT;
 const PORT = Number(process.env.PORT || 3000);
 
 if (!BOT_TOKEN) {
@@ -18,26 +18,38 @@ if (!BOT_TOKEN) {
   process.exit(1);
 }
 
-if (!FIREBASE_SERVICE_ACCOUNT) {
-  console.error("FIREBASE_SERVICE_ACCOUNT পাওয়া যায়নি।");
+if (!ALLOWED_GROUP_ID) {
+  console.error("ALLOWED_GROUP_ID পাওয়া যায়নি।");
   process.exit(1);
 }
 
-let serviceAccount;
-try {
-  serviceAccount = JSON.parse(FIREBASE_SERVICE_ACCOUNT);
-} catch {
-  console.error("FIREBASE_SERVICE_ACCOUNT সঠিক JSON নয়।");
-  process.exit(1);
-}
-
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount)
-});
-
-const db = admin.firestore();
 const bot = new Telegraf(BOT_TOKEN);
 const app = express();
+const DATA_FILE = path.join(__dirname, "data.json");
+
+function loadData() {
+  try {
+    if (!fs.existsSync(DATA_FILE)) {
+      return { lastDealId: 0, deals: {} };
+    }
+
+    const parsed = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
+
+    return {
+      lastDealId: Number(parsed.lastDealId || 0),
+      deals: parsed.deals || {}
+    };
+  } catch (error) {
+    console.error("data.json পড়তে সমস্যা:", error.message);
+    return { lastDealId: 0, deals: {} };
+  }
+}
+
+function saveData(data) {
+  const tempFile = `${DATA_FILE}.tmp`;
+  fs.writeFileSync(tempFile, JSON.stringify(data, null, 2), "utf8");
+  fs.renameSync(tempFile, DATA_FILE);
+}
 
 function esc(value = "") {
   return String(value)
@@ -50,15 +62,16 @@ function formatDealId(number) {
   return `#${String(number).padStart(4, "0")}`;
 }
 
-function allowedGroup(chatId) {
-  return ALLOWED_GROUP_ID && String(chatId) === ALLOWED_GROUP_ID;
+function isAllowedGroup(chatId) {
+  return String(chatId) === ALLOWED_GROUP_ID;
 }
 
 async function isAdmin(ctx) {
   try {
     const member = await ctx.telegram.getChatMember(ctx.chat.id, ctx.from.id);
     return member.status === "creator" || member.status === "administrator";
-  } catch {
+  } catch (error) {
+    console.error("Admin check failed:", error.message);
     return false;
   }
 }
@@ -83,25 +96,21 @@ function parseCreateCommand(text = "") {
     currencySymbol: isDollar ? "$" : "৳",
     buyer: match[3],
     seller: match[4],
+
+    // আপনার চাওয়া বর্তমান format:
+    // প্রথম condition Seller-এর নিচে
+    // | এর পরের condition Buyer-এর নিচে
     sellerCondition: match[5].trim(),
     buyerCondition: match[6].trim()
   };
 }
 
-async function nextDealId() {
-  const counterRef = db.collection("system").doc("counter");
-
-  return db.runTransaction(async (transaction) => {
-    const snap = await transaction.get(counterRef);
-    const lastDealId = snap.exists ? Number(snap.data().lastDealId || 0) : 0;
-    const next = lastDealId + 1;
-
-    transaction.set(counterRef, { lastDealId: next }, { merge: true });
-    return formatDealId(next);
-  });
+function nextDeal(data) {
+  data.lastDealId += 1;
+  return formatDealId(data.lastDealId);
 }
 
-function paymentText(deal) {
+function basePaymentText(deal) {
   return [
     "💳 <b>PAYMENT INSTRUCTIONS</b> 💳",
     "━━━━━━━━━━━━━━━━━━━━━━",
@@ -135,16 +144,69 @@ function paymentText(deal) {
   ].join("\n");
 }
 
-function paidEditedText(deal) {
-  return [
-    paymentText(deal),
-    "",
-    "🔒 <b>Payment Successfully Received</b>",
-    "",
-    `🆔 Deal ID: <code>${esc(deal.dealId)}</code>`,
-    "",
-    "✅ Payment verified successfully."
-  ].join("\n");
+function statusBlock(deal) {
+  if (deal.status === "paid") {
+    return [
+      "",
+      "🔒 <b>Payment Successfully Received</b>",
+      "",
+      `🆔 Deal ID: <code>${esc(deal.dealId)}</code>`,
+      "",
+      "✅ Payment verified successfully."
+    ].join("\n");
+  }
+
+  if (deal.status === "released") {
+    return [
+      "",
+      "✅ <b>Deal Completed Successfully</b>",
+      "",
+      `🆔 Deal ID: <code>${esc(deal.dealId)}</code>`,
+      "",
+      "✅ Payment released successfully."
+    ].join("\n");
+  }
+
+  if (deal.status === "cancelled") {
+    return [
+      "",
+      "❌ <b>Deal Cancelled</b>",
+      "",
+      `🆔 Deal ID: <code>${esc(deal.dealId)}</code>`,
+      "",
+      "The deal has been cancelled by an admin."
+    ].join("\n");
+  }
+
+  return "";
+}
+
+function fullDealText(deal) {
+  return basePaymentText(deal) + statusBlock(deal);
+}
+
+function buttonsFor(deal) {
+  if (deal.status === "waiting_payment") {
+    return Markup.inlineKeyboard([
+      [Markup.button.callback("🔒 Payment Received", `paid:${deal.dealId}`)],
+      [Markup.button.callback("❌ Cancel Deal", `cancel:${deal.dealId}`)]
+    ]);
+  }
+
+  if (deal.status === "paid") {
+    return Markup.inlineKeyboard([
+      [Markup.button.callback("✅ Release Payment", `release:${deal.dealId}`)],
+      [Markup.button.callback("❌ Cancel Deal", `cancel:${deal.dealId}`)]
+    ]);
+  }
+
+  return Markup.inlineKeyboard([]);
+}
+
+async function answerEmpty(ctx) {
+  try {
+    await ctx.answerCbQuery();
+  } catch {}
 }
 
 bot.start(async (ctx) => {
@@ -156,7 +218,7 @@ bot.command("m", async (ctx) => {
     return ctx.reply("এই কমান্ডটি শুধু অনুমোদিত গ্রুপে ব্যবহার করা যাবে।");
   }
 
-  if (!allowedGroup(ctx.chat.id)) {
+  if (!isAllowedGroup(ctx.chat.id)) {
     await deleteSilently(ctx);
     return;
   }
@@ -175,8 +237,8 @@ bot.command("m", async (ctx) => {
       [
         "❌ সঠিক ফরম্যাট:",
         "",
-        "<code>/m 200 @buyer @seller Seller Condition | Buyer Condition</code>",
-        "<code>/m 200d @buyer @seller Seller Condition | Buyer Condition</code>"
+        "<code>/m 200 @buyer @seller First Condition | Second Condition</code>",
+        "<code>/m 200d @buyer @seller First Condition | Second Condition</code>"
       ].join("\n"),
       { parse_mode: "HTML" }
     );
@@ -188,7 +250,8 @@ bot.command("m", async (ctx) => {
     return;
   }
 
-  const dealId = await nextDealId();
+  const data = loadData();
+  const dealId = nextDeal(data);
 
   const deal = {
     dealId,
@@ -200,78 +263,106 @@ bot.command("m", async (ctx) => {
     buyerCondition: parsed.buyerCondition,
     status: "waiting_payment",
     createdBy: ctx.from.id,
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAt: new Date().toISOString(),
     groupId: String(ctx.chat.id)
   };
 
-  await db.collection("deals").doc(dealId.replace("#", "")).set(deal);
+  data.deals[dealId] = deal;
+  saveData(data);
 
-  const sent = await ctx.telegram.sendMessage(ctx.chat.id, paymentText(deal), {
-    parse_mode: "HTML",
-    disable_web_page_preview: true,
-    ...Markup.inlineKeyboard([
-      [Markup.button.callback("🔒 Payment Received", `paid:${dealId}`)]
-    ])
-  });
+  const sent = await ctx.telegram.sendMessage(
+    ctx.chat.id,
+    fullDealText(deal),
+    {
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
+      ...buttonsFor(deal)
+    }
+  );
 
-  await db.collection("deals").doc(dealId.replace("#", "")).set({
-    groupMessageId: sent.message_id
-  }, { merge: true });
+  data.deals[dealId].groupMessageId = sent.message_id;
+  saveData(data);
 });
 
-bot.action(/^paid:(#\d{4,})$/, async (ctx) => {
-  const dealId = ctx.match[1];
+bot.action(/^(paid|release|cancel):(#\d{4,})$/, async (ctx) => {
+  const action = ctx.match[1];
+  const dealId = ctx.match[2];
 
-  if (!allowedGroup(ctx.chat.id)) {
-    return ctx.answerCbQuery("এই গ্রুপ অনুমোদিত নয়।", { show_alert: true });
+  if (!isAllowedGroup(ctx.chat.id)) {
+    return ctx.answerCbQuery("এই গ্রুপ অনুমোদিত নয়।", {
+      show_alert: true
+    });
   }
 
   if (!(await isAdmin(ctx))) {
-    return ctx.answerCbQuery("শুধু গ্রুপ Admin এই Button ব্যবহার করতে পারবেন।", {
+    return ctx.answerCbQuery(
+      "শুধু গ্রুপ Admin এই Button ব্যবহার করতে পারবেন।",
+      { show_alert: true }
+    );
+  }
+
+  const data = loadData();
+  const deal = data.deals[dealId];
+
+  if (!deal) {
+    return ctx.answerCbQuery("Deal পাওয়া যায়নি।", {
       show_alert: true
     });
   }
 
-  const ref = db.collection("deals").doc(dealId.replace("#", ""));
-  const snap = await ref.get();
+  if (action === "paid") {
+    if (deal.status !== "waiting_payment") {
+      return ctx.answerCbQuery("এই Deal ইতোমধ্যে Update হয়েছে।", {
+        show_alert: true
+      });
+    }
 
-  if (!snap.exists) {
-    return ctx.answerCbQuery("Deal পাওয়া যায়নি।", { show_alert: true });
+    deal.status = "paid";
+    deal.paidBy = ctx.from.id;
+    deal.paidAt = new Date().toISOString();
   }
 
-  const deal = snap.data();
+  if (action === "release") {
+    if (deal.status !== "paid") {
+      return ctx.answerCbQuery("আগে Payment Received করতে হবে।", {
+        show_alert: true
+      });
+    }
 
-  if (deal.status === "paid") {
-    return ctx.answerCbQuery("Payment আগেই verified হয়েছে।", {
-      show_alert: true
-    });
+    deal.status = "released";
+    deal.releasedBy = ctx.from.id;
+    deal.releasedAt = new Date().toISOString();
   }
 
-  await ref.set({
-    status: "paid",
-    paidBy: ctx.from.id,
-    paidAt: admin.firestore.FieldValue.serverTimestamp()
-  }, { merge: true });
+  if (action === "cancel") {
+    if (deal.status === "released" || deal.status === "cancelled") {
+      return ctx.answerCbQuery("এই Deal ইতোমধ্যে শেষ হয়েছে।", {
+        show_alert: true
+      });
+    }
 
-  await ctx.editMessageText(paidEditedText(deal), {
+    deal.status = "cancelled";
+    deal.cancelledBy = ctx.from.id;
+    deal.cancelledAt = new Date().toISOString();
+  }
+
+  data.deals[dealId] = deal;
+  saveData(data);
+
+  await ctx.editMessageText(fullDealText(deal), {
     parse_mode: "HTML",
-    disable_web_page_preview: true
+    disable_web_page_preview: true,
+    ...buttonsFor(deal)
   });
 
-  // Telegram-এর loading animation বন্ধ করতে empty callback answer।
-  // কোনো popup text দেখাবে না।
-  try {
-    await ctx.answerCbQuery();
-  } catch {}
+  await answerEmpty(ctx);
 });
 
 bot.on("my_chat_member", async (ctx) => {
-  if (!ALLOWED_GROUP_ID) return;
-
   const status = ctx.update.my_chat_member.new_chat_member.status;
   const active = ["member", "administrator"].includes(status);
 
-  if (active && String(ctx.chat.id) !== ALLOWED_GROUP_ID) {
+  if (active && !isAllowedGroup(ctx.chat.id)) {
     try {
       await ctx.telegram.leaveChat(ctx.chat.id);
     } catch {}
@@ -283,11 +374,16 @@ bot.catch((error) => {
 });
 
 app.get("/", (_req, res) => {
-  res.send("Infinity Deal Bot v3.5 is running ✅");
+  res.send("Infinity Deal Bot V4 is running ✅");
 });
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, version: "3.5.0" });
+  res.json({
+    ok: true,
+    version: "4.0.0",
+    firebase: false,
+    privateMessages: false
+  });
 });
 
 app.listen(PORT, async () => {
@@ -295,9 +391,9 @@ app.listen(PORT, async () => {
 
   try {
     await bot.launch({ dropPendingUpdates: true });
-    console.log("Infinity Deal Bot v3.5 started ✅");
+    console.log("Infinity Deal Bot V4 started ✅");
   } catch (error) {
-    console.error("Launch error:", error);
+    console.error("Bot launch failed:", error);
   }
 });
 
