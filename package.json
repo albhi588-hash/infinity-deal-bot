@@ -1,8 +1,8 @@
 {
-  "name": "infinity-deal-bot-v4-2-dm",
-  "version": "4.2.0",
+  "name": "infinity-deal-bot-v4-4-release-flow",
+  "version": "4.4.0",
   "private": true,
-  "description": "Infinity Deal Bot V4.2 - buyer/seller DM and short group edit",
+  "description": "Infinity Deal Bot V4.4 - public release/refund flow with admin completion",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
