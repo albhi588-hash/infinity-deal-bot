@@ -265,7 +265,7 @@ function detailsText(deal) {
     `💰 Amount: <b>${esc(deal.amount)} ${esc(deal.currencySymbol)}</b>`,
     "📊 Status: <b>🟢 Active</b>",
     `💳 Method: <b>${esc(p.methodLabel)}</b>`,
-    `📱 Number: <code>${esc(p.number)}</code>`,
+    `💸 Send Payment To:\n👤 ${esc(deal.payout.flow === "release" ? deal.seller + " (Seller)" : deal.buyer + " (Buyer)")}\n\n📱 Number: <code>${esc(p.number)}</code>`,
     "━━━━━━━━━━━━━━━━━━━━━━",
     "Payment সম্পন্ন হলে নিচের Button চাপুন।"
   ].join("\n");
