@@ -12,6 +12,11 @@ const NAGAD = process.env.NAGAD || "01571092111";
 const ROCKET = process.env.ROCKET || "01571092111";
 const BINANCE_PAY_ID = process.env.BINANCE_PAY_ID || "784264674";
 const PORT = Number(process.env.PORT || 3000);
+const PAYMENT_TIMEOUT_MINUTES = Math.max(1, Number(process.env.PAYMENT_TIMEOUT_MINUTES || 30));
+const SUPER_ADMIN_IDS = new Set(String(process.env.SUPER_ADMIN_IDS || "")
+  .split(",").map(v => v.trim()).filter(Boolean));
+const MODERATOR_IDS = new Set(String(process.env.MODERATOR_IDS || "")
+  .split(",").map(v => v.trim()).filter(Boolean));
 
 if (!BOT_TOKEN || !ALLOWED_GROUP_ID) {
   console.error("BOT_TOKEN অথবা ALLOWED_GROUP_ID পাওয়া যায়নি।");
@@ -23,7 +28,7 @@ const app = express();
 const DATA_FILE = path.join(__dirname, "data.json");
 
 function defaultData() {
-  return { lastDealId: 0, deals: {}, users: {} };
+  return { lastDealId: 0, deals: {}, users: {}, usersById: {}, adminLogs: [] };
 }
 
 function loadData() {
@@ -33,7 +38,9 @@ function loadData() {
     return {
       lastDealId: Number(parsed.lastDealId || 0),
       deals: parsed.deals || {},
-      users: parsed.users || {}
+      users: parsed.users || {},
+      usersById: parsed.usersById || {},
+      adminLogs: Array.isArray(parsed.adminLogs) ? parsed.adminLogs : []
     };
   } catch (error) {
     console.error("data.json read error:", error.message);
@@ -70,27 +77,103 @@ function isAllowedGroup(chatId) {
   return String(chatId) === ALLOWED_GROUP_ID;
 }
 
-async function isAdmin(ctx) {
+async function adminRole(ctx) {
+  const userId = String(ctx.from?.id || "");
+  if (SUPER_ADMIN_IDS.has(userId)) return "super_admin";
+  if (MODERATOR_IDS.has(userId)) return "moderator";
   try {
     const member = await ctx.telegram.getChatMember(ctx.chat.id, ctx.from.id);
-    return member.status === "creator" || member.status === "administrator";
-  } catch {
-    return false;
-  }
+    if (member.status === "creator") return "super_admin";
+    if (member.status === "administrator") return "moderator";
+  } catch {}
+  return null;
+}
+
+async function isAdmin(ctx) {
+  return Boolean(await adminRole(ctx));
+}
+
+async function isSuperAdmin(ctx) {
+  return (await adminRole(ctx)) === "super_admin";
+}
+
+function dhakaTime(iso = new Date().toISOString()) {
+  return new Date(iso).toLocaleString("en-US", {
+    timeZone: "Asia/Dhaka",
+    year: "numeric", month: "short", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: true
+  });
+}
+
+function addTimeline(deal, type, text, actor = null) {
+  if (!Array.isArray(deal.timeline)) deal.timeline = [];
+  deal.timeline.push({ type, text, actor, at: new Date().toISOString() });
+}
+
+function addAdminLog(data, ctx, action, dealId = null, details = "") {
+  if (!Array.isArray(data.adminLogs)) data.adminLogs = [];
+  data.adminLogs.push({
+    action, dealId, details,
+    adminId: ctx.from?.id,
+    adminUsername: ctx.from?.username || null,
+    at: new Date().toISOString()
+  });
+  if (data.adminLogs.length > 2000) data.adminLogs = data.adminLogs.slice(-2000);
+}
+
+function timelineText(deal) {
+  const items = Array.isArray(deal.timeline) ? deal.timeline.slice(-6) : [];
+  if (!items.length) return "";
+  return ["", "🕘 <b>Deal History</b>", ...items.map(i => `• ${esc(i.text)} — ${esc(dhakaTime(i.at))}`)].join("\n");
+}
+
+function progressText(deal) {
+  const map = {
+    waiting_payment: "▰▱▱▱ 25%",
+    paid: "▰▰▱▱ 50%",
+    release_pending: "▰▰▰▱ 75%",
+    completed: "▰▰▰▰ 100%",
+    refunded: "▰▰▰▰ 100%",
+    cancelled: "▰▰▰▰ Closed"
+  };
+  return map[deal.status] || "▰▱▱▱ 25%";
 }
 
 async function deleteMessageSilently(ctx) {
   try { await ctx.deleteMessage(); } catch {}
 }
 
-function registerUser(ctx) {
-  if (!ctx.from?.username) return;
+async function registerUser(ctx) {
+  if (!ctx.from?.id || !ctx.from?.username) return;
   const data = loadData();
-  data.users[usernameKey(ctx.from.username)] = {
+  const userId = String(ctx.from.id);
+  const previous = data.usersById?.[userId];
+  const current = ctx.from.username;
+
+  if (!data.usersById) data.usersById = {};
+  data.users[usernameKey(current)] = {
     userId: ctx.from.id,
-    username: ctx.from.username,
+    username: current,
     updatedAt: new Date().toISOString()
   };
+  data.usersById[userId] = { username: current, updatedAt: new Date().toISOString() };
+
+  if (previous?.username && usernameKey(previous.username) !== usernameKey(current)) {
+    const affected = Object.values(data.deals).filter(d =>
+      !["completed", "refunded", "cancelled"].includes(d.status) &&
+      [usernameKey(d.buyer), usernameKey(d.seller)].includes(usernameKey(previous.username))
+    );
+    for (const deal of affected) {
+      addTimeline(deal, "username_changed", `Username changed: @${previous.username} → @${current}`, userId);
+    }
+    saveData(data);
+    if (ctx.chat?.type !== "private" && affected.length) {
+      await ctx.reply(
+        `⚠️ Username পরিবর্তনের সতর্কতা\n@${previous.username} এখন @${current} ব্যবহার করছেন।\nActive Deal: ${affected.map(d => d.dealId).join(", ")}`
+      ).catch(() => {});
+    }
+    return;
+  }
   saveData(data);
 }
 
@@ -143,8 +226,12 @@ function paymentText(deal) {
     "│",
     "╰ 📎 Payment Confirmation:",
     "   Send Screenshot or Last 4 Digits",
-    "━━━━━━━━━━━━━━━━━━━━━━"
-  ].join("\n");
+    "━━━━━━━━━━━━━━━━━━━━━━",
+    `📈 Progress: <b>${progressText(deal)}</b>`,
+    `🕒 Created: ${esc(dhakaTime(deal.createdAt))}`,
+    `⏳ Payment confirmation deadline: ${esc(dhakaTime(deal.paymentExpiresAt))}`,
+    timelineText(deal)
+  ].filter(Boolean).join("\n");
 }
 
 function cancelledText(deal) {
@@ -157,8 +244,11 @@ function cancelledText(deal) {
     `👤 Buyer: ${esc(deal.buyer)}`,
     "",
     "📊 Status: <b>🔴 Cancelled</b>",
-    "━━━━━━━━━━━━━━━━━━━━━━"
-  ].join("\n");
+    `📈 Progress: <b>${progressText(deal)}</b>`,
+    `🕒 Updated: ${esc(dhakaTime(deal.cancelledAt))}`,
+    "━━━━━━━━━━━━━━━━━━━━━━",
+    timelineText(deal)
+  ].filter(Boolean).join("\n");
 }
 
 function verifiedText(deal) {
@@ -174,8 +264,13 @@ function verifiedText(deal) {
     "",
     `👤 Buyer: ${esc(deal.buyer)}`,
     "📝 Condition:",
-    esc(deal.buyerCondition)
-  ].join("\n");
+    esc(deal.buyerCondition),
+    "",
+    `📊 Status: <b>🟡 Payment Verified</b>`,
+    `📈 Progress: <b>${progressText(deal)}</b>`,
+    `🕒 Verified: ${esc(dhakaTime(deal.paidAt))}`,
+    timelineText(deal)
+  ].filter(Boolean).join("\n");
 }
 
 function decisionLabel(value) {
@@ -215,8 +310,10 @@ function releaseDecisionText(deal) {
     "",
     `📊 Status: <b>${status}</b>`,
     `📅 Release Request Time: ${esc(r.requestedAtText)}`,
-    "━━━━━━━━━━━━━━━━━━━━━━"
-  ].join("\n");
+    `📈 Progress: <b>${progressText(deal)}</b>`,
+    "━━━━━━━━━━━━━━━━━━━━━━",
+    timelineText(deal)
+  ].filter(Boolean).join("\n");
 }
 
 function decisionButtons(dealId) {
@@ -307,9 +404,12 @@ function completedText(deal) {
     "📝 <b>Buyer's Condition:</b>",
     esc(deal.buyerCondition),
     "",
-    `📊 Status: <b>${releaseFlow ? "🟢 Completed" : "🟢 Refunded"}</b>`,
-    "━━━━━━━━━━━━━━━━━━━━━━"
-  ].join("\n");
+    `📊 Status: <b>${releaseFlow ? "✅ Completed" : "↩️ Refunded"}</b>`,
+    `📈 Progress: <b>${progressText(deal)}</b>`,
+    `🕒 Completed: ${esc(dhakaTime(deal.completedAt))}`,
+    "━━━━━━━━━━━━━━━━━━━━━━",
+    timelineText(deal)
+  ].filter(Boolean).join("\n");
 }
 
 function findWaitingDealForUser(data, username, chatId) {
@@ -323,8 +423,12 @@ function findWaitingDealForUser(data, username, chatId) {
   });
 }
 
+bot.use(async (ctx, next) => {
+  await registerUser(ctx);
+  return next();
+});
+
 bot.start(async (ctx) => {
-  registerUser(ctx);
   await ctx.reply("✅ Infinity Deal Bot চালু আছে।");
 });
 
@@ -352,8 +456,13 @@ bot.command("m", async (ctx) => {
     status: "waiting_payment",
     createdBy: ctx.from.id,
     createdAt: new Date().toISOString(),
-    groupId: String(ctx.chat.id)
+    paymentExpiresAt: new Date(Date.now() + PAYMENT_TIMEOUT_MINUTES * 60 * 1000).toISOString(),
+    groupId: String(ctx.chat.id),
+    adminNotes: [],
+    timeline: []
   };
+  addTimeline(data.deals[dealId], "created", "Deal created", ctx.from.id);
+  addAdminLog(data, ctx, "CREATE_DEAL", dealId, `${parsed.amount} ${parsed.currencySymbol}`);
   saveData(data);
 
   const sent = await ctx.telegram.sendMessage(
@@ -380,8 +489,19 @@ bot.action(/^paid:(#\d{4,})$/, async (ctx) => {
   const deal = data.deals[ctx.match[1]];
   if (!deal) return;
 
+  if (deal.status === "cancelled") {
+    return ctx.answerCbQuery("এই Deal ইতোমধ্যে Cancel হয়ে গেছে।", { show_alert: true });
+  }
+
+  const expiresAt = new Date(deal.paymentExpiresAt || 0).getTime();
+  if (deal.status !== "waiting_payment" || (expiresAt && Date.now() >= expiresAt)) {
+    return ctx.answerCbQuery("Payment confirmation সময় শেষ হয়ে গেছে।", { show_alert: true });
+  }
+
   deal.status = "paid";
   deal.paidAt = new Date().toISOString();
+  addTimeline(deal, "payment_verified", "Payment verified", ctx.from.id);
+  addAdminLog(data, ctx, "PAYMENT_VERIFIED", deal.dealId);
   saveData(data);
 
   await ctx.editMessageText(verifiedText(deal), {
@@ -410,6 +530,8 @@ bot.command("cancel", async (ctx) => {
   deal.status = "cancelled";
   deal.cancelledAt = new Date().toISOString();
   deal.cancelledBy = ctx.from.id;
+  addTimeline(deal, "cancelled", "Deal cancelled", ctx.from.id);
+  addAdminLog(data, ctx, "CANCEL_DEAL", deal.dealId);
   saveData(data);
 
   const messageIds = [...new Set([
@@ -457,11 +579,15 @@ bot.command("release", async (ctx) => {
   const deal = data.deals[dealId];
   if (!deal || deal.status !== "paid") return;
 
+  deal.status = "release_pending";
   deal.release = {
     buyerDecision: "pending",
     sellerDecision: "pending",
     requestedAtText: new Date().toLocaleString("en-US", { timeZone: "Asia/Dhaka" })
   };
+
+  addTimeline(deal, "release_requested", "Release decision requested", ctx.from.id);
+  addAdminLog(data, ctx, "REQUEST_RELEASE", deal.dealId);
 
   const sent = await ctx.telegram.sendMessage(
     ctx.chat.id,
@@ -503,6 +629,7 @@ bot.action(/^party_(accept|decline):(#\d{4,})$/, async (ctx) => {
   }
 
   deal.release[field] = ctx.match[1] === "accept" ? "accepted" : "declined";
+  addTimeline(deal, "party_decision", `${role === "buyer" ? "Buyer" : "Seller"} ${deal.release[field]}`, ctx.from.id);
   saveData(data);
 
   const bothDone =
@@ -691,6 +818,8 @@ bot.action(/^complete:(#\d{4,})$/, async (ctx) => {
   deal.payout.stage = "completed";
   deal.status = deal.payout.flow === "release" ? "completed" : "refunded";
   deal.completedAt = new Date().toISOString();
+  addTimeline(deal, deal.status, deal.status === "completed" ? "Deal completed" : "Buyer refunded", ctx.from.id);
+  addAdminLog(data, ctx, deal.status === "completed" ? "COMPLETE_DEAL" : "REFUND_DEAL", deal.dealId);
   saveData(data);
 
   await ctx.editMessageText(completedText(deal), {
@@ -701,6 +830,82 @@ bot.action(/^complete:(#\d{4,})$/, async (ctx) => {
   try { await ctx.answerCbQuery(); } catch {}
 });
 
+
+bot.command("note", async (ctx) => {
+  if (ctx.chat.type === "private") return;
+  if (!isAllowedGroup(ctx.chat.id) || !(await isAdmin(ctx))) {
+    await deleteMessageSilently(ctx);
+    return;
+  }
+  const m = (ctx.message.text || "").match(/^\/note(?:@\w+)?\s+#?(\d+)\s+([\s\S]+)$/i);
+  await deleteMessageSilently(ctx);
+  if (!m) return;
+  const dealId = `#${String(m[1]).padStart(4, "0")}`;
+  const data = loadData();
+  const deal = data.deals[dealId];
+  if (!deal) return;
+  if (!Array.isArray(deal.adminNotes)) deal.adminNotes = [];
+  deal.adminNotes.push({ text: m[2].trim(), by: ctx.from.id, username: ctx.from.username || null, at: new Date().toISOString() });
+  addAdminLog(data, ctx, "ADD_NOTE", dealId);
+  saveData(data);
+  try {
+    await ctx.telegram.sendMessage(ctx.from.id, `📝 Admin Note Saved\n${dealId}\n${m[2].trim()}`);
+  } catch {}
+});
+
+bot.command("notes", async (ctx) => {
+  if (ctx.chat.type === "private") return;
+  if (!isAllowedGroup(ctx.chat.id) || !(await isAdmin(ctx))) {
+    await deleteMessageSilently(ctx);
+    return;
+  }
+  const m = (ctx.message.text || "").match(/^\/notes(?:@\w+)?\s+#?(\d+)$/i);
+  await deleteMessageSilently(ctx);
+  if (!m) return;
+  const dealId = `#${String(m[1]).padStart(4, "0")}`;
+  const data = loadData();
+  const deal = data.deals[dealId];
+  if (!deal) return;
+  const notes = Array.isArray(deal.adminNotes) ? deal.adminNotes : [];
+  const text = notes.length
+    ? [`📝 Admin Notes — ${dealId}`, ...notes.map((n,i) => `${i+1}. ${n.text}\nBy: @${n.username || n.by} | ${dhakaTime(n.at)}`)].join("\n\n")
+    : `📝 ${dealId}-এ কোনো Admin Note নেই।`;
+  try { await ctx.telegram.sendMessage(ctx.from.id, text); } catch {}
+});
+
+bot.command("adminlog", async (ctx) => {
+  if (ctx.chat.type === "private") return;
+  if (!isAllowedGroup(ctx.chat.id) || !(await isSuperAdmin(ctx))) {
+    await deleteMessageSilently(ctx);
+    return;
+  }
+  await deleteMessageSilently(ctx);
+  const data = loadData();
+  const logs = (data.adminLogs || []).slice(-15).reverse();
+  const text = logs.length
+    ? ["👮 Recent Admin Log", ...logs.map(l => `• ${l.action}${l.dealId ? ` ${l.dealId}` : ""} — @${l.adminUsername || l.adminId} — ${dhakaTime(l.at)}`)].join("\n")
+    : "কোনো Admin Log নেই।";
+  try { await ctx.telegram.sendMessage(ctx.from.id, text); } catch {}
+});
+
+bot.command("admins", async (ctx) => {
+  if (ctx.chat.type === "private") return;
+  if (!isAllowedGroup(ctx.chat.id) || !(await isSuperAdmin(ctx))) {
+    await deleteMessageSilently(ctx);
+    return;
+  }
+  await deleteMessageSilently(ctx);
+  const text = [
+    "👮 Admin Permission",
+    `Super Admin IDs: ${[...SUPER_ADMIN_IDS].join(", ") || "Group Creator"}`,
+    `Moderator IDs: ${[...MODERATOR_IDS].join(", ") || "Group Administrators"}`,
+    "",
+    "Super Admin: সব কমান্ড + /adminlog",
+    "Moderator: Deal create, verify, release, cancel, note"
+  ].join("\n");
+  try { await ctx.telegram.sendMessage(ctx.from.id, text); } catch {}
+});
+
 bot.on("my_chat_member", async (ctx) => {
   const status = ctx.update.my_chat_member.new_chat_member.status;
   if (["member", "administrator"].includes(status) && !isAllowedGroup(ctx.chat.id)) {
@@ -708,16 +913,80 @@ bot.on("my_chat_member", async (ctx) => {
   }
 });
 
+
+async function autoCancelExpiredDeals() {
+  const data = loadData();
+  const now = Date.now();
+  const expired = [];
+
+  for (const deal of Object.values(data.deals || {})) {
+    if (deal.status !== "waiting_payment") continue;
+
+    // পুরোনো Active Deal-এ deadline না থাকলে createdAt থেকে ৩০ মিনিট ধরা হবে।
+    if (!deal.paymentExpiresAt) {
+      const created = new Date(deal.createdAt || now).getTime();
+      deal.paymentExpiresAt = new Date(created + PAYMENT_TIMEOUT_MINUTES * 60 * 1000).toISOString();
+    }
+
+    if (now < new Date(deal.paymentExpiresAt).getTime()) continue;
+
+    deal.status = "cancelled";
+    deal.cancelledAt = new Date().toISOString();
+    deal.cancelledBy = "SYSTEM_TIMEOUT";
+    deal.autoCancelled = true;
+    addTimeline(deal, "auto_cancelled", `Payment confirmation not received within ${PAYMENT_TIMEOUT_MINUTES} minutes`, "SYSTEM");
+
+    if (!Array.isArray(data.adminLogs)) data.adminLogs = [];
+    data.adminLogs.push({
+      action: "AUTO_CANCEL_TIMEOUT",
+      dealId: deal.dealId,
+      details: `${PAYMENT_TIMEOUT_MINUTES} minute payment timeout`,
+      adminId: "SYSTEM",
+      adminUsername: "System",
+      at: deal.cancelledAt
+    });
+    expired.push(deal);
+  }
+
+  if (!expired.length) return;
+  if (data.adminLogs.length > 2000) data.adminLogs = data.adminLogs.slice(-2000);
+  saveData(data);
+
+  for (const deal of expired) {
+    try {
+      await bot.telegram.editMessageText(
+        deal.groupId || ALLOWED_GROUP_ID,
+        deal.groupMessageId,
+        undefined,
+        cancelledText(deal),
+        { parse_mode: "HTML", reply_markup: { inline_keyboard: [] } }
+      );
+    } catch (error) {
+      try {
+        await bot.telegram.sendMessage(
+          deal.groupId || ALLOWED_GROUP_ID,
+          cancelledText(deal),
+          { parse_mode: "HTML" }
+        );
+      } catch {}
+    }
+  }
+}
+
 bot.catch((error) => console.error("Bot error:", error));
 
-app.get("/", (_req, res) => res.send("Infinity Deal Bot V4.5 is running ✅"));
-app.get("/health", (_req, res) => res.json({ ok: true, version: "4.5.0" }));
+app.get("/", (_req, res) => res.send("Infinity Deal Bot V5.1 is running ✅"));
+app.get("/health", (_req, res) => res.json({ ok: true, version: "5.1.0" }));
 
 app.listen(PORT, async () => {
   console.log(`Web server running on port ${PORT}`);
   try {
     await bot.launch({ dropPendingUpdates: true });
-    console.log("Infinity Deal Bot V4.5 started ✅");
+    await autoCancelExpiredDeals();
+    setInterval(() => {
+      autoCancelExpiredDeals().catch(error => console.error("Auto cancel error:", error.message));
+    }, 15000);
+    console.log(`Infinity Deal Bot V5.1 started ✅ | Payment timeout: ${PAYMENT_TIMEOUT_MINUTES} minutes`);
   } catch (error) {
     console.error("Bot launch failed:", error);
   }
