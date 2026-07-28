@@ -1,17 +1,16 @@
 const express = require("express");
-const fs = require("fs");
-const path = require("path");
 const { Telegraf, Markup } = require("telegraf");
+const admin = require("firebase-admin");
 require("dotenv").config();
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const ALLOWED_GROUP_ID = String(process.env.ALLOWED_GROUP_ID || "").trim();
-const OWNER_USER_ID = String(process.env.OWNER_USER_ID || "").trim();
 
 const BKASH = process.env.BKASH || "01571092111";
 const NAGAD = process.env.NAGAD || "01571092111";
 const ROCKET = process.env.ROCKET || "01571092111";
 const BINANCE_PAY_ID = process.env.BINANCE_PAY_ID || "784264674";
+const FIREBASE_SERVICE_ACCOUNT = process.env.FIREBASE_SERVICE_ACCOUNT;
 const PORT = Number(process.env.PORT || 3000);
 
 if (!BOT_TOKEN) {
@@ -19,27 +18,26 @@ if (!BOT_TOKEN) {
   process.exit(1);
 }
 
+if (!FIREBASE_SERVICE_ACCOUNT) {
+  console.error("FIREBASE_SERVICE_ACCOUNT পাওয়া যায়নি।");
+  process.exit(1);
+}
+
+let serviceAccount;
+try {
+  serviceAccount = JSON.parse(FIREBASE_SERVICE_ACCOUNT);
+} catch {
+  console.error("FIREBASE_SERVICE_ACCOUNT সঠিক JSON নয়।");
+  process.exit(1);
+}
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount)
+});
+
+const db = admin.firestore();
 const bot = new Telegraf(BOT_TOKEN);
 const app = express();
-const DATA_FILE = path.join(__dirname, "data.json");
-
-function loadData() {
-  try {
-    if (!fs.existsSync(DATA_FILE)) return { lastDealId: 0, deals: {} };
-    const parsed = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
-    return {
-      lastDealId: Number(parsed.lastDealId || 0),
-      deals: parsed.deals || {}
-    };
-  } catch (error) {
-    console.error("Data read error:", error);
-    return { lastDealId: 0, deals: {} };
-  }
-}
-
-function saveData(data) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), "utf8");
-}
 
 function esc(value = "") {
   return String(value)
@@ -48,13 +46,12 @@ function esc(value = "") {
     .replaceAll(">", "&gt;");
 }
 
-function dealIdOf(number) {
+function formatDealId(number) {
   return `#${String(number).padStart(4, "0")}`;
 }
 
-function groupAllowed(chatId) {
-  if (!ALLOWED_GROUP_ID) return true;
-  return String(chatId) === ALLOWED_GROUP_ID;
+function allowedGroup(chatId) {
+  return ALLOWED_GROUP_ID && String(chatId) === ALLOWED_GROUP_ID;
 }
 
 async function isAdmin(ctx) {
@@ -70,10 +67,11 @@ async function deleteSilently(ctx) {
   try { await ctx.deleteMessage(); } catch {}
 }
 
-function parseCommand(text = "") {
+function parseCreateCommand(text = "") {
   const match = text.match(
     /^\/m(?:@\w+)?\s+(\d+(?:\.\d{1,2})?)\s+(@[A-Za-z0-9_]{5,})\s+(@[A-Za-z0-9_]{5,})\s+([\s\S]+?)\s*\|\s*([\s\S]+)$/i
   );
+
   if (!match) return null;
 
   return {
@@ -83,6 +81,19 @@ function parseCommand(text = "") {
     sellerCondition: match[4].trim(),
     buyerCondition: match[5].trim()
   };
+}
+
+async function nextDealId() {
+  const counterRef = db.collection("system").doc("counter");
+
+  return db.runTransaction(async (transaction) => {
+    const snap = await transaction.get(counterRef);
+    const lastDealId = snap.exists ? Number(snap.data().lastDealId || 0) : 0;
+    const next = lastDealId + 1;
+
+    transaction.set(counterRef, { lastDealId: next }, { merge: true });
+    return formatDealId(next);
+  });
 }
 
 function paymentText(deal) {
@@ -119,7 +130,7 @@ function paymentText(deal) {
   ].join("\n");
 }
 
-function ownerPaidText(dealId) {
+function paidGroupText(dealId) {
   return [
     "🔒 <b>Payment Successfully Received</b>",
     "",
@@ -130,48 +141,15 @@ function ownerPaidText(dealId) {
 }
 
 bot.start(async (ctx) => {
-  await ctx.reply(
-    [
-      "✅ Infinity Deal Bot চালু আছে।",
-      "",
-      "নিজের Telegram User ID দেখতে: /myid",
-      "গ্রুপের Group ID দেখতে: গ্রুপে /groupid"
-    ].join("\n")
-  );
-});
-
-bot.command("myid", async (ctx) => {
-  await ctx.reply(`আপনার User ID:\n<code>${ctx.from.id}</code>`, {
-    parse_mode: "HTML"
-  });
-});
-
-bot.command("groupid", async (ctx) => {
-  if (ctx.chat.type === "private") {
-    return ctx.reply("এই কমান্ডটি আপনার গ্রুপে পাঠান।");
-  }
-
-  const admin = await isAdmin(ctx);
-  if (!admin) return deleteSilently(ctx);
-
-  await deleteSilently(ctx);
-  const msg = await ctx.telegram.sendMessage(
-    ctx.chat.id,
-    `এই গ্রুপের ID:\n<code>${ctx.chat.id}</code>`,
-    { parse_mode: "HTML" }
-  );
-
-  setTimeout(() => {
-    ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id).catch(() => {});
-  }, 30000);
+  await ctx.reply("✅ Infinity Deal Bot চালু আছে।");
 });
 
 bot.command("m", async (ctx) => {
   if (ctx.chat.type === "private") {
-    return ctx.reply("এই কমান্ডটি শুধু গ্রুপে ব্যবহার করা যাবে।");
+    return ctx.reply("এই কমান্ডটি শুধু অনুমোদিত গ্রুপে ব্যবহার করা যাবে।");
   }
 
-  if (!groupAllowed(ctx.chat.id)) {
+  if (!allowedGroup(ctx.chat.id)) {
     await deleteSilently(ctx);
     return;
   }
@@ -181,7 +159,7 @@ bot.command("m", async (ctx) => {
     return;
   }
 
-  const parsed = parseCommand(ctx.message.text || "");
+  const parsed = parseCreateCommand(ctx.message.text || "");
   await deleteSilently(ctx);
 
   if (!parsed) {
@@ -201,11 +179,9 @@ bot.command("m", async (ctx) => {
     return;
   }
 
-  const data = loadData();
-  data.lastDealId += 1;
-
+  const dealId = await nextDealId();
   const deal = {
-    dealId: dealIdOf(data.lastDealId),
+    dealId,
     amount: parsed.amount,
     buyer: parsed.buyer,
     seller: parsed.seller,
@@ -213,41 +189,46 @@ bot.command("m", async (ctx) => {
     buyerCondition: parsed.buyerCondition,
     status: "waiting_payment",
     createdBy: ctx.from.id,
-    createdAt: new Date().toISOString(),
-    groupId: ctx.chat.id
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    groupId: String(ctx.chat.id)
   };
 
-  data.deals[deal.dealId] = deal;
-  saveData(data);
+  await db.collection("deals").doc(dealId.replace("#", "")).set(deal);
 
-  await ctx.telegram.sendMessage(ctx.chat.id, paymentText(deal), {
+  const sent = await ctx.telegram.sendMessage(ctx.chat.id, paymentText(deal), {
     parse_mode: "HTML",
     disable_web_page_preview: true,
     ...Markup.inlineKeyboard([
-      [Markup.button.callback("🔒 Payment Received", `paid:${deal.dealId}`)]
+      [Markup.button.callback("🔒 Payment Received", `paid:${dealId}`)]
     ])
   });
+
+  await db.collection("deals").doc(dealId.replace("#", "")).set({
+    groupMessageId: sent.message_id
+  }, { merge: true });
 });
 
 bot.action(/^paid:(#\d{4,})$/, async (ctx) => {
   const dealId = ctx.match[1];
 
-  if (!groupAllowed(ctx.chat.id)) {
+  if (!allowedGroup(ctx.chat.id)) {
     return ctx.answerCbQuery("এই গ্রুপ অনুমোদিত নয়।", { show_alert: true });
   }
 
   if (!(await isAdmin(ctx))) {
-    return ctx.answerCbQuery("শুধু Admin ব্যবহার করতে পারবেন।", {
+    return ctx.answerCbQuery("শুধু গ্রুপ Admin এই Button ব্যবহার করতে পারবেন।", {
       show_alert: true
     });
   }
 
-  const data = loadData();
-  const deal = data.deals[dealId];
+  const ref = db.collection("deals").doc(dealId.replace("#", ""));
+  const snap = await ref.get();
 
-  if (!deal) {
+  if (!snap.exists) {
     return ctx.answerCbQuery("Deal পাওয়া যায়নি।", { show_alert: true });
   }
+
+  const deal = snap.data();
 
   if (deal.status === "paid") {
     return ctx.answerCbQuery("Payment আগেই verified হয়েছে।", {
@@ -255,28 +236,25 @@ bot.action(/^paid:(#\d{4,})$/, async (ctx) => {
     });
   }
 
-  deal.status = "paid";
-  deal.paidBy = ctx.from.id;
-  deal.paidAt = new Date().toISOString();
-  saveData(data);
-
-  if (OWNER_USER_ID) {
-    try {
-      await ctx.telegram.sendMessage(OWNER_USER_ID, ownerPaidText(dealId), {
-        parse_mode: "HTML"
-      });
-    } catch (error) {
-      console.error("Owner DM failed:", error.message);
-      return ctx.answerCbQuery(
-        "Verified হয়েছে, কিন্তু Private message যায়নি। আগে Bot-এ Start চাপুন।",
-        { show_alert: true }
-      );
-    }
-  }
+  await ref.set({
+    status: "paid",
+    paidBy: ctx.from.id,
+    paidAt: admin.firestore.FieldValue.serverTimestamp()
+  }, { merge: true });
 
   try {
     await ctx.editMessageReplyMarkup({ inline_keyboard: [] });
   } catch {}
+
+  await ctx.telegram.sendMessage(
+    ctx.chat.id,
+    paidGroupText(dealId),
+    {
+      parse_mode: "HTML",
+      reply_to_message_id: ctx.callbackQuery.message.message_id,
+      allow_sending_without_reply: true
+    }
+  );
 
   await ctx.answerCbQuery("✅ Payment verified successfully.", {
     show_alert: true
@@ -294,21 +272,24 @@ bot.on("my_chat_member", async (ctx) => {
   }
 });
 
-bot.catch((error) => console.error("Bot error:", error));
+bot.catch((error) => {
+  console.error("Bot error:", error);
+});
 
 app.get("/", (_req, res) => {
-  res.send("Infinity Deal Bot v2 is running ✅");
+  res.send("Infinity Deal Bot v3.1 is running ✅");
 });
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, version: "2.0.0" });
+  res.json({ ok: true, version: "3.1.0" });
 });
 
 app.listen(PORT, async () => {
   console.log(`Web server running on port ${PORT}`);
+
   try {
     await bot.launch({ dropPendingUpdates: true });
-    console.log("Infinity Deal Bot v2 started ✅");
+    console.log("Infinity Deal Bot v3.1 started ✅");
   } catch (error) {
     console.error("Launch error:", error);
   }
